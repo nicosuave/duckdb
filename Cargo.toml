@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = [
+  "crates/duckdb_cli",
+  "crates/duckdb_render_width",
+  "crates/duckdb_linenoise",
+  "crates/duckdb_shellshim",
+  "crates/duckdb_sys",
+]

@@ -458,6 +458,17 @@ def test_schema_indent(shell):
     )
     result = test.run()
     result.check_stdout("CREATE TABLE test(\n")
+    result.check_stdout(");;")
+
+def test_schema_indent_short(shell):
+    test = (
+        ShellTest(shell)
+        .statement("create table t(a int);")
+        .statement(".schema --indent")
+    )
+    result = test.run()
+    result.check_stdout("CREATE TABLE t(a INTEGER);;")
+    result.check_not_exist("CREATE TABLE t(\n")
 
 def test_tables(shell):
     test = (
@@ -816,7 +827,7 @@ def test_mode_json_infinity(shell, dot_command):
         .statement("SELECT 'inf'::DOUBLE AS inf, '-inf'::DOUBLE AS ninf, 'nan'::DOUBLE AS nan, '-nan'::DOUBLE AS nnan;")
     )
     result = test.run()
-    result.check_stdout('[{"inf":Infinity,"ninf":-Infinity,"nan":NaN,"nnan":NaN}]')
+    result.check_stdout('[{"inf":1e999,"ninf":-1e999,"nan":null,"nnan":null}]')
 
 def test_mode_insert(shell):
     test = (

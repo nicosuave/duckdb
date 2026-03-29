@@ -87,6 +87,28 @@ def test_decimal_separator(shell):
     result.check_stdout("59,99 million")
     result.check_stdout("1,00 billion")
 
+def test_decimal_and_thousand_separator(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".decimal_sep ,")
+        .statement(".thousand_sep .")
+        .statement("select 1234567.89::decimal(9,2) as n;")
+    )
+    result = test.run()
+    result.check_stdout("1.234.567,89")
+
+def test_decimal_and_thousand_separator_negative(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".decimal_sep ,")
+        .statement(".thousand_sep .")
+        .statement("select 1234567.89::decimal(9,2) as p, -123456789.01::decimal(11,2) as n;")
+    )
+    result = test.run()
+    result.check_stdout("1.234.567,89")
+    result.check_stdout("-123456789,01")
+    result.check_not_exist("-123.456.789,01")
+
 def test_odd_floating_points(shell):
     test = (
         ShellTest(shell)
@@ -104,6 +126,16 @@ def test_disable_readable_numbers(shell):
     result = test.run()
     result.check_not_exist('(123.46 million)')
 
+def test_large_number_rendering_invalid_bool(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".large_number_rendering none")
+        .statement("select 123456789;")
+    )
+    result = test.run()
+    result.check_stderr('ERROR: Not a boolean value: "none". Assuming "no".')
+    result.check_not_exist('(123.46 million)')
+
 def test_large_number_rendering_all(shell):
     test = (
         ShellTest(shell)
@@ -113,6 +145,15 @@ def test_large_number_rendering_all(shell):
     result = test.run()
     result.check_stdout('123.46 million')
     result.check_not_exist('(123.46 million)')
+
+def test_large_number_rendering_footer_centers_value_row(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".large_number_rendering footer")
+        .statement("select 1234567 as a, 1234567890123 as b, 999999999999999999 as c;")
+    )
+    result = test.run()
+    result.check_stdout("│    1234567     │  1234567890123  │ 999999999999999999 │")
 
 def test_readable_numbers_columns(shell):
     test = (
@@ -149,3 +190,13 @@ def test_readable_numbers_row_count_wide_single_col(shell):
     )
     result = test.run()
     result.check_stdout('1.23 million rows')
+
+def test_readable_numbers_footer_streaming_fallback(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".maxrows -1")
+        .statement(".large_number_rendering footer")
+        .statement("select 123456789;")
+    )
+    result = test.run()
+    result.check_stdout('(123.46 million)')

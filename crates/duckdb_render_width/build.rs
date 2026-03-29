@@ -1,0 +1,72 @@
+use std::env;
+use std::path::PathBuf;
+use std::process::Command;
+
+fn main() {
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
+
+    let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
+    let obj_dir = out_dir.join("obj");
+    let _ = std::fs::create_dir_all(&obj_dir);
+
+    let manifest_dir =
+        PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
+    let workspace_root = manifest_dir.join("../..");
+
+    let include_dir = workspace_root.join("third_party/utf8proc/include");
+    let utf8proc_src = workspace_root.join("third_party/utf8proc/utf8proc.cpp");
+    let wrapper_src = manifest_dir.join("src/render_width.cpp");
+
+    println!("cargo:rerun-if-changed={}", utf8proc_src.display());
+    println!("cargo:rerun-if-changed={}", wrapper_src.display());
+
+    let sources = [utf8proc_src, wrapper_src];
+    let mut objects: Vec<PathBuf> = Vec::new();
+    for src in sources {
+        let file_name = src.file_name().and_then(|s| s.to_str()).unwrap_or("object");
+        let obj_path = obj_dir.join(format!("{file_name}.o"));
+
+        let mut cxx = Command::new("c++");
+        cxx.arg("-std=c++17")
+            .arg(format!("-I{}", include_dir.display()))
+            .arg("-c")
+            .arg(&src)
+            .arg("-o")
+            .arg(&obj_path);
+
+        let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
+        if target_os == "macos" {
+            cxx.arg("-mmacosx-version-min=11.0");
+        }
+        if target_os == "linux" {
+            cxx.arg("-fPIC");
+        }
+
+        let status = cxx.status().expect("failed to invoke c++");
+        if !status.success() {
+            panic!("c++ failed with status {status}");
+        }
+        objects.push(obj_path);
+    }
+
+    let lib_path = out_dir.join("libduckdb_render_width.a");
+    let mut ar = Command::new("ar");
+    ar.arg("crus").arg(&lib_path);
+    for obj in &objects {
+        ar.arg(obj);
+    }
+    let status = ar.status().expect("failed to invoke ar");
+    if !status.success() {
+        panic!("ar failed with status {status}");
+    }
+
+    println!("cargo:rustc-link-search=native={}", out_dir.display());
+    println!("cargo:rustc-link-lib=static=duckdb_render_width");
+
+    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
+    match target_os.as_str() {
+        "macos" => println!("cargo:rustc-link-lib=c++"),
+        "linux" => println!("cargo:rustc-link-lib=stdc++"),
+        other => panic!("unsupported target OS: {other}"),
+    }
+}

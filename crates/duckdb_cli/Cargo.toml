@@ -1,0 +1,14 @@
+[package]
+name = "duckdb_cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+duckdb_linenoise = { path = "../duckdb_linenoise" }
+duckdb_render_width = { path = "../duckdb_render_width" }
+duckdb_shellshim = { path = "../duckdb_shellshim" }
+duckdb_sys = { path = "../duckdb_sys" }
+libc = "0.2"
+
+[features]
+duckdb_log_storage = []

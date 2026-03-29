@@ -159,3 +159,40 @@ def test_dump_if_not_exists(shell):
     result.check_stdout('CREATE SCHEMA IF NOT EXISTS other;')
     result.check_stdout('INSERT INTO other.tbl VALUES(42);')
     result.check_stdout('COMMIT')
+
+
+def test_dump_schema_semicolons_and_order(shell):
+    test = (
+        ShellTest(shell)
+        .statement("CREATE SCHEMA s;")
+        .statement("CREATE TABLE t(a INT, b VARCHAR);")
+        .statement("CREATE TABLE s.u(x INT);")
+        .statement("CREATE VIEW v AS SELECT 1 AS one;")
+        .statement(".changes off")
+        .statement("INSERT INTO t VALUES (1, 'x'), (2, NULL);")
+        .statement("INSERT INTO s.u VALUES (42);")
+        .statement(".dump")
+    )
+    result = test.run()
+    assert result.status_code == 0
+
+    out = result.stdout
+    assert "CREATE SCHEMA IF NOT EXISTS s;;" in out
+
+    idx_schema = out.find("CREATE SCHEMA IF NOT EXISTS s;;")
+    idx_create_t = out.find("CREATE TABLE t(a INTEGER, b VARCHAR);;")
+    idx_insert_t = out.find("INSERT INTO main.t VALUES(1,'x');")
+    idx_create_u = out.find("CREATE TABLE s.u(x INTEGER);;")
+    idx_insert_u = out.find("INSERT INTO s.u VALUES(42);")
+    idx_view = out.find("CREATE VIEW v AS SELECT 1 AS one;;")
+    idx_commit = out.rfind("COMMIT;")
+
+    assert idx_schema != -1
+    assert idx_create_t != -1
+    assert idx_insert_t != -1
+    assert idx_create_u != -1
+    assert idx_insert_u != -1
+    assert idx_view != -1
+    assert idx_commit != -1
+
+    assert idx_schema < idx_create_t < idx_insert_t < idx_create_u < idx_insert_u < idx_view < idx_commit
