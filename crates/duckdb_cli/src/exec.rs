@@ -2,7 +2,7 @@
 use crate::output::OutputHandle;
 use crate::session::Session;
 use crate::state::{
-    HighlightMode, HighlightStyle, OptionType, PagerMode, PrintColor, PrintIntensity,
+    BailOnError, HighlightMode, HighlightStyle, OptionType, PagerMode, PrintColor, PrintIntensity,
     ReadLineVersion, RenderMode, ShellState,
 };
 use duckdb_shellshim as shellshim;
@@ -1900,8 +1900,13 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
     }
     match spec.id {
         crate::dotcmd::DotCommandId::Bail => {
-            // .bail on|off
-            state.bail_on_error = string_to_bool(&args[1]);
+            state.bail = if args[1] == "auto" {
+                BailOnError::Automatic
+            } else if string_to_bool(&args[1]) {
+                BailOnError::Bail
+            } else {
+                BailOnError::DontBail
+            };
             0
         }
         crate::dotcmd::DotCommandId::Binary => {
@@ -3486,7 +3491,7 @@ ORDER BY tbl_name='sqlite_sequence'",
 
                         let Some(schema) = get_table_schema(session.con, &table_name) else {
                             had_error = true;
-                            if state.bail_on_error {
+                            if state.bail != BailOnError::DontBail {
                                 break;
                             }
                             continue;
@@ -3499,7 +3504,7 @@ ORDER BY tbl_name='sqlite_sequence'",
                         let cols = table_column_list(session.con, &qualified);
                         if cols.is_empty() {
                             had_error = true;
-                            if state.bail_on_error {
+                            if state.bail != BailOnError::DontBail {
                                 break;
                             }
                             continue;
@@ -3519,7 +3524,7 @@ ORDER BY tbl_name='sqlite_sequence'",
                         let rc = run_sql_script(state, session.con, &select);
                         if rc != 0 {
                             had_error = true;
-                            if state.bail_on_error {
+                            if state.bail != BailOnError::DontBail {
                                 break;
                             }
                         }
@@ -4002,16 +4007,16 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                         let ptr = data as *const i64;
                         let _ = out.write_all((*ptr.add(row as usize)).to_string().as_bytes());
                     },
-	                    duckdb_sys::DUCKDB_TYPE_HUGEINT => unsafe {
-	                        let ptr = data as *const duckdb_sys::duckdb_hugeint;
-	                        let v = *ptr.add(row as usize);
-	                        let signed = ((v.upper as i128) << 64) + (v.lower as i128);
-	                        let _ = out.write_all(signed.to_string().as_bytes());
-	                    },
-	                    duckdb_sys::DUCKDB_TYPE_UTINYINT => unsafe {
-	                        let ptr = data as *const u8;
-	                        write_json_string(out, &(*ptr.add(row as usize)).to_string());
-	                    },
+                    duckdb_sys::DUCKDB_TYPE_HUGEINT => unsafe {
+                        let ptr = data as *const duckdb_sys::duckdb_hugeint;
+                        let v = *ptr.add(row as usize);
+                        let signed = ((v.upper as i128) << 64) + (v.lower as i128);
+                        write_json_string(out, &signed.to_string());
+                    },
+                    duckdb_sys::DUCKDB_TYPE_UTINYINT => unsafe {
+                        let ptr = data as *const u8;
+                        let _ = out.write_all((*ptr.add(row as usize)).to_string().as_bytes());
+                    },
                     duckdb_sys::DUCKDB_TYPE_USMALLINT => unsafe {
                         let ptr = data as *const u16;
                         let _ = out.write_all((*ptr.add(row as usize)).to_string().as_bytes());
@@ -4020,54 +4025,34 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                         let ptr = data as *const u32;
                         let _ = out.write_all((*ptr.add(row as usize)).to_string().as_bytes());
                     },
-	                    duckdb_sys::DUCKDB_TYPE_UBIGINT => unsafe {
-	                        let ptr = data as *const u64;
-	                        let _ = out.write_all((*ptr.add(row as usize)).to_string().as_bytes());
-	                    },
-	                    duckdb_sys::DUCKDB_TYPE_UHUGEINT => unsafe {
-	                        let ptr = data as *const duckdb_sys::duckdb_uhugeint;
-	                        let v = *ptr.add(row as usize);
-	                        let unsigned = (v.upper as u128) << 64 | (v.lower as u128);
-	                        let _ = out.write_all(unsigned.to_string().as_bytes());
-	                    },
-	                    duckdb_sys::DUCKDB_TYPE_FLOAT | duckdb_sys::DUCKDB_TYPE_DOUBLE => {
-	                        if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
-	                            let mut v = s.trim();
-	                            let stripped = v
-	                                .strip_prefix('\'')
-	                                .and_then(|rest| rest.rfind("'::").map(|idx| rest[..idx].to_string()));
-	                            if let Some(stripped) = stripped.as_deref() {
-	                                v = stripped;
-	                            }
-
-	                            let lower = v.trim().to_ascii_lowercase();
-	                            if matches!(lower.as_str(), "nan" | "-nan" | "+nan") {
-	                                let _ = out.write_all(b"null");
-	                            } else if matches!(
-	                                lower.as_str(),
-	                                "inf" | "infinity" | "+inf" | "+infinity" | "1e1000" | "1e+1000"
-	                            ) {
-	                                let _ = out.write_all(b"1e999");
-	                            } else if matches!(lower.as_str(), "-inf" | "-infinity" | "-1e1000" | "-1e+1000")
-	                            {
-	                                let _ = out.write_all(b"-1e999");
-	                            } else {
-	                                let _ = out.write_all(v.as_bytes());
-	                            }
-	                        } else {
-	                            let _ = out.write_all(b"null");
-	                        }
-	                    }
+                    duckdb_sys::DUCKDB_TYPE_UBIGINT => unsafe {
+                        let ptr = data as *const u64;
+                        write_json_string(out, &(*ptr.add(row as usize)).to_string());
+                    },
+                    duckdb_sys::DUCKDB_TYPE_UHUGEINT => unsafe {
+                        let ptr = data as *const duckdb_sys::duckdb_uhugeint;
+                        let v = *ptr.add(row as usize);
+                        let unsigned = (v.upper as u128) << 64 | (v.lower as u128);
+                        write_json_string(out, &unsigned.to_string());
+                    },
+                    duckdb_sys::DUCKDB_TYPE_FLOAT => unsafe {
+                        let ptr = data as *const f32;
+                        write_json_float(out, *ptr.add(row as usize) as f64);
+                    },
+                    duckdb_sys::DUCKDB_TYPE_DOUBLE => unsafe {
+                        let ptr = data as *const f64;
+                        write_json_float(out, *ptr.add(row as usize));
+                    },
 	                    duckdb_sys::DUCKDB_TYPE_DECIMAL => {
 	                        if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
-	                            let _ = out.write_all(s.as_bytes());
+	                            write_json_string(out, s.as_str());
 	                        } else {
 	                            let _ = out.write_all(b"null");
 	                        }
 	                    }
 	                    duckdb_sys::DUCKDB_TYPE_BIGNUM => {
 	                        if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
-	                            let _ = out.write_all(s.as_bytes());
+	                            write_json_string(out, s.as_str());
 	                        } else {
 	                            let _ = out.write_all(b"null");
 	                        }
@@ -4106,26 +4091,117 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
 	                        let member_vector =
 	                            duckdb_sys::duckdb_struct_vector_get_child(vector, 1 + tag);
 	                        let mut member_type = duckdb_sys::duckdb_union_type_member_type(type_, tag);
-	                        if let Some(s) = crate::value::vector_value_to_string(member_vector, member_type, row) {
-	                            write_json_string(out, s.as_str());
-	                        } else {
-	                            let _ = out.write_all(b"null");
-	                        }
+                        let member_name_ptr = duckdb_sys::duckdb_union_type_member_name(type_, tag);
+                        let member_name = if member_name_ptr.is_null() {
+                            String::new()
+                        } else {
+                            let s = CStr::from_ptr(member_name_ptr).to_string_lossy().to_string();
+                            duckdb_sys::duckdb_free(member_name_ptr as *mut _);
+                            s
+                        };
+                        let _ = out.write_all(b"{");
+                        write_json_string(out, member_name.as_str());
+                        let _ = out.write_all(b":");
+                        write_json_value(out, member_vector, member_type, row, depth + 1);
+                        let _ = out.write_all(b"}");
 	                        duckdb_sys::duckdb_destroy_logical_type(&mut member_type);
 	                    },
-	                    duckdb_sys::DUCKDB_TYPE_LIST
-	                    | duckdb_sys::DUCKDB_TYPE_ARRAY
-	                    | duckdb_sys::DUCKDB_TYPE_STRUCT
-	                    | duckdb_sys::DUCKDB_TYPE_MAP => {
-	                        if let Some(mut s) = crate::value::vector_value_to_string(vector, type_, row) {
-	                            if s.starts_with('[') || s.starts_with('{') {
-	                                s = normalize_complex_value_for_shell_display(s.as_str(), false).into_owned();
-	                            }
-	                            write_json_string(out, s.as_str());
-	                        } else {
-	                            let _ = out.write_all(b"null");
-	                        }
-	                    }
+                    duckdb_sys::DUCKDB_TYPE_LIST => unsafe {
+                        let entries = data as *const duckdb_sys::duckdb_list_entry;
+                        let entry = *entries.add(row as usize);
+                        let child_vector = duckdb_sys::duckdb_list_vector_get_child(vector);
+                        let mut child_type = duckdb_sys::duckdb_list_type_child_type(type_);
+                        let _ = out.write_all(b"[");
+                        for i in 0..entry.length {
+                            if i > 0 {
+                                let _ = out.write_all(b",");
+                            }
+                            write_json_value(
+                                out,
+                                child_vector,
+                                child_type,
+                                entry.offset + i,
+                                depth + 1,
+                            );
+                        }
+                        let _ = out.write_all(b"]");
+                        duckdb_sys::duckdb_destroy_logical_type(&mut child_type);
+                    },
+                    duckdb_sys::DUCKDB_TYPE_ARRAY => unsafe {
+                        let array_size = duckdb_sys::duckdb_array_type_array_size(type_);
+                        let child_vector = duckdb_sys::duckdb_array_vector_get_child(vector);
+                        let mut child_type = duckdb_sys::duckdb_array_type_child_type(type_);
+                        let _ = out.write_all(b"[");
+                        for i in 0..array_size {
+                            if i > 0 {
+                                let _ = out.write_all(b",");
+                            }
+                            write_json_value(
+                                out,
+                                child_vector,
+                                child_type,
+                                row * array_size + i,
+                                depth + 1,
+                            );
+                        }
+                        let _ = out.write_all(b"]");
+                        duckdb_sys::duckdb_destroy_logical_type(&mut child_type);
+                    },
+                    duckdb_sys::DUCKDB_TYPE_STRUCT => unsafe {
+                        let child_count = duckdb_sys::duckdb_struct_type_child_count(type_);
+                        let _ = out.write_all(b"{");
+                        for idx in 0..child_count {
+                            if idx > 0 {
+                                let _ = out.write_all(b",");
+                            }
+                            let name_ptr = duckdb_sys::duckdb_struct_type_child_name(type_, idx);
+                            let name = if name_ptr.is_null() {
+                                String::new()
+                            } else {
+                                let s = CStr::from_ptr(name_ptr).to_string_lossy().to_string();
+                                duckdb_sys::duckdb_free(name_ptr as *mut _);
+                                s
+                            };
+                            write_json_string(out, name.as_str());
+                            let _ = out.write_all(b":");
+                            let child_vector = duckdb_sys::duckdb_struct_vector_get_child(vector, idx);
+                            let mut child_type = duckdb_sys::duckdb_struct_type_child_type(type_, idx);
+                            write_json_value(out, child_vector, child_type, row, depth + 1);
+                            duckdb_sys::duckdb_destroy_logical_type(&mut child_type);
+                        }
+                        let _ = out.write_all(b"}");
+                    },
+                    duckdb_sys::DUCKDB_TYPE_MAP => unsafe {
+                        let entries = data as *const duckdb_sys::duckdb_list_entry;
+                        let entry = *entries.add(row as usize);
+                        let child_vector = duckdb_sys::duckdb_list_vector_get_child(vector);
+                        let key_vector = duckdb_sys::duckdb_struct_vector_get_child(child_vector, 0);
+                        let value_vector = duckdb_sys::duckdb_struct_vector_get_child(child_vector, 1);
+                        let mut key_type = duckdb_sys::duckdb_map_type_key_type(type_);
+                        let mut value_type = duckdb_sys::duckdb_map_type_value_type(type_);
+                        let _ = out.write_all(b"{");
+                        let mut written = 0u64;
+                        for i in 0..entry.length {
+                            let child_row = entry.offset + i;
+                            let Some(key) = crate::value::vector_value_to_string(
+                                key_vector,
+                                key_type,
+                                child_row,
+                            ) else {
+                                continue;
+                            };
+                            if written > 0 {
+                                let _ = out.write_all(b",");
+                            }
+                            write_json_string(out, key.as_str());
+                            let _ = out.write_all(b":");
+                            write_json_value(out, value_vector, value_type, child_row, depth + 1);
+                            written += 1;
+                        }
+                        let _ = out.write_all(b"}");
+                        duckdb_sys::duckdb_destroy_logical_type(&mut key_type);
+                        duckdb_sys::duckdb_destroy_logical_type(&mut value_type);
+                    },
                     duckdb_sys::DUCKDB_TYPE_TIMESTAMP_TZ => {
                         if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
                             write_json_string(out, s.as_str());
@@ -4203,7 +4279,7 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
 	                                types[c],
 	                                r as u64,
 	                            ) {
-	                                let _ = out.write_all(s.trim().as_bytes());
+	                                write_json_string(&mut out, s.trim());
 	                            } else {
 	                                let _ = out.write_all(b"null");
 	                            }
@@ -5302,8 +5378,12 @@ fn run_sql_script(state: &mut ShellState, con: duckdb_sys::duckdb_connection, cm
                         unsafe { duckdb_sys::duckdb_column_logical_type(&mut result, c as u64) };
                     if !logical.is_null() {
                         let type_id = unsafe { duckdb_sys::duckdb_get_type_id(logical) };
+                        let type_name = duckbox_render_type(state, logical, 0);
                         unsafe { duckdb_sys::duckdb_destroy_logical_type(&mut logical) };
-                        let cast_this = match type_id {
+                        let cast_this = if matches!(type_name.as_str(), "geometry" | "unknown") {
+                            true
+                        } else {
+                            match type_id {
                             duckdb_sys::DUCKDB_TYPE_UNION => !matches!(
                                 state.mode,
                                 RenderMode::JSON | RenderMode::JSONLINES | RenderMode::DUCKBOX
@@ -5315,6 +5395,7 @@ fn run_sql_script(state: &mut ShellState, con: duckdb_sys::duckdb_connection, cm
 	                                )
 	                            }
                             _ => false,
+                            }
                         };
                         if cast_this {
                             cast_cols[c] = true;
@@ -7690,6 +7771,34 @@ fn render_duckbox_result(
         footer.render_length = m + 4;
     }
 
+    fn use_plain_footer(
+        footer: &DuckboxFooter,
+        has_hidden_columns: bool,
+        row_count: usize,
+        col_count: usize,
+    ) -> bool {
+        footer.must_show_footer
+            && !footer.has_hidden_rows
+            && !has_hidden_columns
+            && footer.readable_rows_str.is_empty()
+            && footer.shown_str.is_empty()
+            && row_count >= 10
+            && col_count > 1
+    }
+
+    fn plain_footer_line(footer: &DuckboxFooter, total_render_length: usize) -> String {
+        let padding = total_render_length
+            .saturating_sub(4)
+            .saturating_sub(footer.row_count_str.len())
+            .saturating_sub(footer.column_count_str.len());
+        format!(
+            "  {}{}{}",
+            footer.row_count_str,
+            " ".repeat(padding),
+            footer.column_count_str
+        )
+    }
+
     fn is_numeric_type(t: duckdb_sys::duckdb_type) -> bool {
         matches!(
             t,
@@ -9344,8 +9453,23 @@ fn render_duckbox_result(
             }
             let total_render_length = compute_total_render_length(&render_col_width);
 
-            // footer
-            if footer.must_show_footer {
+            let plain_footer = use_plain_footer(&footer, has_hidden_columns, row_count, col_count);
+            if plain_footer {
+                box_row_sep(
+                    &mut writer,
+                    &render_col_width,
+                    BOX_24,
+                    BOX_12,
+                    BOX_124,
+                    BOX_14,
+                    &layout_write,
+                );
+                let footer_line = plain_footer_line(&footer, total_render_length);
+                write_styled(&mut writer, &ansi_layout, &footer_line);
+                writer.write_all(b"\n");
+            } else {
+                // footer
+                if footer.must_show_footer {
                 let mut render_anything = true;
                 let minimum_length = footer.row_count_str.len() + footer.column_count_str.len() + 6;
                 let render_rows_and_columns = total_render_length >= minimum_length
@@ -9442,29 +9566,30 @@ fn render_duckbox_result(
                     }
                 }
                 let _ = (left, right);
-            }
+                }
 
-            if footer.must_show_footer {
-                let single_width = [total_render_length.saturating_sub(4)];
-                box_row_sep(
-                    &mut writer,
-                    &single_width,
-                    BOX_24,
-                    BOX_12,
-                    BOX_124,
-                    BOX_14,
-                    &layout_write,
-                );
-            } else {
-                box_row_sep(
-                    &mut writer,
-                    &render_col_width,
-                    BOX_24,
-                    BOX_12,
-                    BOX_124,
-                    BOX_14,
-                    &layout_write,
-                );
+                if footer.must_show_footer {
+                    let single_width = [total_render_length.saturating_sub(4)];
+                    box_row_sep(
+                        &mut writer,
+                        &single_width,
+                        BOX_24,
+                        BOX_12,
+                        BOX_124,
+                        BOX_14,
+                        &layout_write,
+                    );
+                } else {
+                    box_row_sep(
+                        &mut writer,
+                        &render_col_width,
+                        BOX_24,
+                        BOX_12,
+                        BOX_124,
+                        BOX_14,
+                        &layout_write,
+                    );
+                }
             }
         }
     }
@@ -9860,8 +9985,23 @@ fn render_duckbox_result(
             }
         }
 
-        // footer
-        if footer.must_show_footer {
+        let plain_footer = use_plain_footer(&footer, has_hidden_columns, row_count, col_count);
+        if plain_footer {
+            box_row_sep(
+                &mut writer,
+                &render_col_width,
+                BOX_24,
+                BOX_12,
+                BOX_124,
+                BOX_14,
+                &layout_write,
+            );
+            let footer_line = plain_footer_line(&footer, total_render_length);
+            write_styled(&mut writer, &ansi_layout, &footer_line);
+            writer.write_all(b"\n");
+        } else {
+            // footer
+            if footer.must_show_footer {
             let mut render_anything = true;
             let minimum_length = footer.row_count_str.len() + footer.column_count_str.len() + 6;
             let render_rows_and_columns = total_render_length >= minimum_length
@@ -9955,29 +10095,30 @@ fn render_duckbox_result(
                 }
             }
             let _ = (left, right);
-        }
+            }
 
-        if footer.must_show_footer {
-            let single_width = [total_render_length.saturating_sub(4)];
-            box_row_sep(
-                &mut writer,
-                &single_width,
-                BOX_24,
-                BOX_12,
-                BOX_124,
-                BOX_14,
-                &layout_write,
-            );
-        } else {
-            box_row_sep(
-                &mut writer,
-                &render_col_width,
-                BOX_24,
-                BOX_12,
-                BOX_124,
-                BOX_14,
-                &layout_write,
-            );
+            if footer.must_show_footer {
+                let single_width = [total_render_length.saturating_sub(4)];
+                box_row_sep(
+                    &mut writer,
+                    &single_width,
+                    BOX_24,
+                    BOX_12,
+                    BOX_124,
+                    BOX_14,
+                    &layout_write,
+                );
+            } else {
+                box_row_sep(
+                    &mut writer,
+                    &render_col_width,
+                    BOX_24,
+                    BOX_12,
+                    BOX_124,
+                    BOX_14,
+                    &layout_write,
+                );
+            }
         }
     }
 
@@ -10233,7 +10374,7 @@ fn run_duckbox_query_impl(
                     let type_name = duckbox_render_type(state, logical, 0);
                     original_type_names.push(type_name.clone());
                     unsafe { duckdb_sys::duckdb_destroy_logical_type(&mut logical) };
-                    if type_name == "unknown"
+                    if matches!(type_name.as_str(), "geometry" | "unknown")
                         || matches!(
                             type_id,
                             duckdb_sys::DUCKDB_TYPE_INVALID

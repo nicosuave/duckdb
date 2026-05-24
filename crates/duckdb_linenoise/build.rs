@@ -5,6 +5,9 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
     println!("cargo:rerun-if-env-changed=DUCKDB_LINENOISE_DIR");
+    println!("cargo:rerun-if-env-changed=DUCKDB_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=DUCKDB_SQLITE3_API_WRAPPER_DIR");
+    println!("cargo:rerun-if-env-changed=DUCKDB_VENDOR_VERSION");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
     let obj_dir = out_dir.join("obj");
@@ -13,14 +16,18 @@ fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let workspace_root = manifest_dir.join("../..");
+    let vendor_version = env::var("DUCKDB_VENDOR_VERSION").unwrap_or_else(|_| "1.5.3".to_string());
     let linenoise_dir = env::var_os("DUCKDB_LINENOISE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join("vendor/duckdb/1.4.3/linenoise"));
+        .unwrap_or_else(|| workspace_root.join(format!("vendor/duckdb/{vendor_version}/linenoise")));
 
-    let duckdb_include = workspace_root.join("vendor/duckdb/1.4.3/include");
+    let duckdb_include = env::var_os("DUCKDB_INCLUDE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root.join(format!("vendor/duckdb/{vendor_version}/include")));
     let utf8proc_include = workspace_root.join("third_party/utf8proc/include");
-    let sqlite3_api_wrapper_include =
-        workspace_root.join("vendor/duckdb/1.4.3/sqlite3_api_wrapper");
+    let sqlite3_api_wrapper_include = env::var_os("DUCKDB_SQLITE3_API_WRAPPER_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root.join(format!("vendor/duckdb/{vendor_version}/sqlite3_api_wrapper")));
     let include_dir = linenoise_dir.join("include");
 
     let sources = [
@@ -40,6 +47,7 @@ fn main() {
         let mut cxx = Command::new("c++");
         cxx.arg("-std=c++17")
             .arg("-ULINENOISE_LOGGING")
+            .arg("-DDUCKDB_RUST_CLI_DISABLE_LINENOISE_EDITOR")
             .arg(format!("-I{}", include_dir.display()))
             .arg(format!("-I{}", duckdb_include.display()))
             .arg(format!("-I{}", utf8proc_include.display()))

@@ -40,6 +40,13 @@ pub enum PagerMode {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BailOnError {
+    Automatic,
+    Bail,
+    DontBail,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReadLineVersion {
     Linenoise,
     Fallback,
@@ -138,6 +145,7 @@ pub struct ShellState {
     pub zDbFilename: String,
     pub opened_transient_in_memory: bool,
     pub initFile: String,
+    pub run_init: bool,
 
     pub readStdin: bool,
     pub stdin_is_interactive: bool,
@@ -145,7 +153,7 @@ pub struct ShellState {
     pub stderr_is_console: bool,
     pub stdin_temp_path: Option<String>,
 
-    pub bail_on_error: bool,
+    pub bail: BailOnError,
     pub safe_mode: bool,
 
     pub mode: RenderMode,
@@ -239,12 +247,13 @@ impl ShellState {
             zDbFilename: String::new(),
             opened_transient_in_memory: false,
             initFile: String::new(),
+            run_init: true,
             readStdin: true,
             stdin_is_interactive: true,
             stdout_is_console: true,
             stderr_is_console: true,
             stdin_temp_path: None,
-            bail_on_error: false,
+            bail: BailOnError::Automatic,
             safe_mode: false,
             normalMode: RenderMode::DUCKBOX,
             cMode: RenderMode::DUCKBOX,
@@ -337,6 +346,21 @@ impl ShellState {
             launch_ui: false,
             history_path: None,
             history_entries: Vec::new(),
+        }
+    }
+
+    pub fn get_bail_on_error(&self, mode: InputMode) -> bool {
+        match self.bail {
+            BailOnError::Bail => true,
+            BailOnError::DontBail => false,
+            BailOnError::Automatic => matches!(mode, InputMode::File | InputMode::DuckDbRc),
+        }
+    }
+
+    pub fn command_line_command_bail(&self) -> bool {
+        match self.bail {
+            BailOnError::DontBail => false,
+            BailOnError::Automatic | BailOnError::Bail => true,
         }
     }
 }

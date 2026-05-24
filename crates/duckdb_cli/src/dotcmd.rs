@@ -77,7 +77,7 @@ pub struct DotCommandSpec {
     pub id: DotCommandId,
 }
 
-// This table is modeled after the DuckDB v1.4.3 CLI behavior:
+// This table is modeled after the DuckDB CLI behavior:
 // - Prefix matching is allowed, but some commands require a minimum prefix length (match_size).
 // - When multiple commands match, the first entry wins.
 pub const METADATA_COMMANDS: &[DotCommandSpec] = &[
@@ -85,7 +85,7 @@ pub const METADATA_COMMANDS: &[DotCommandSpec] = &[
         command: "bail",
         argument_count: 2,
         match_size: 3,
-        usage: "on|off",
+        usage: "auto|on|off",
         id: DotCommandId::Bail,
     },
     DotCommandSpec {
@@ -636,7 +636,7 @@ pub fn should_show_in_help(id: DotCommandId) -> bool {
 
 pub fn help_summary(id: DotCommandId) -> &'static str {
     match id {
-		DotCommandId::Bail => "Stop after hitting an error.  Default OFF",
+		DotCommandId::Bail => "Stop after hitting an error.  Default AUTO",
 		DotCommandId::Binary => "Turn binary output on or off.  Default OFF",
 		DotCommandId::Cd => "Change the working directory to DIRECTORY",
 		DotCommandId::Changes => "Show number of rows changed by SQL",

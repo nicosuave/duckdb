@@ -4,7 +4,7 @@ use std::os::raw::c_char;
 use std::os::raw::c_int;
 use std::os::raw::c_void;
 
-pub const DUCKDB_TARGET_VERSION: &str = "1.4.3";
+pub const DUCKDB_TARGET_VERSION: &str = "1.5.3";
 
 #[repr(C)]
 pub struct duckdb_shellshim_duckbox_config {

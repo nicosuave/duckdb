@@ -23,7 +23,7 @@ fn main() {
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
     let lib_name = candidate_lib_name(&target_os);
-    let vendor_version = env::var("DUCKDB_VENDOR_VERSION").unwrap_or_else(|_| "1.4.3".to_string());
+    let vendor_version = env::var("DUCKDB_VENDOR_VERSION").unwrap_or_else(|_| "1.5.3".to_string());
     let lib_source = env::var("DUCKDB_LIB_SOURCE").unwrap_or_else(|_| "vendor".to_string());
 
     let workspace_root =

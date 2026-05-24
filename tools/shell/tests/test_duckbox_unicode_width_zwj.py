@@ -10,5 +10,4 @@ def test_duckbox_unicode_width_zwj(shell):
         .statement("select 'a' as a, '∑' as sigma, '👩‍💻' as emoji")
     )
     result = test.run()
-    result.check_stdout("│ a       │ ∑       │ 👩‍💻    │")
-
+    result.check_stdout("│ a       │ ∑       │ 👩‍💻      │")

@@ -164,21 +164,8 @@ size_t duckdb_cli_compute_render_width_duckbox(const char *buf, size_t len) {
 			continue;
 		}
 		size_t cluster_end = next_grapheme_cluster(buf, len, cpos);
-		size_t cluster_pos = cpos;
-		size_t cluster_width = 0;
-		while (cluster_pos < cluster_end) {
-			utf8proc_int32_t cp;
-			int cp_sz;
-			if (!utf8_iterate_at(buf, len, cluster_pos, cp, cp_sz)) {
-				cluster_pos++;
-				cluster_width++;
-				continue;
-			}
-			auto properties = duckdb::utf8proc_get_property(cp);
-			cluster_width += (size_t)properties->charwidth;
-			cluster_pos += (size_t)cp_sz;
-		}
-		render_width += cluster_width;
+		auto properties = duckdb::utf8proc_get_property(codepoint);
+		render_width += (size_t)properties->charwidth;
 		cpos = cluster_end;
 	}
 	return render_width;
@@ -197,20 +184,8 @@ int duckdb_cli_get_render_position_duckbox(const char *buf, size_t len, int max_
 			return -1;
 		}
 		size_t cluster_end = next_grapheme_cluster(buf, len, cpos);
-		size_t cluster_pos = cpos;
-		size_t char_render_width = 0;
-		while (cluster_pos < cluster_end) {
-			utf8proc_int32_t cp;
-			int cp_sz;
-			if (!utf8_iterate_at(buf, len, cluster_pos, cp, cp_sz)) {
-				cluster_pos++;
-				char_render_width++;
-				continue;
-			}
-			auto properties = duckdb::utf8proc_get_property(cp);
-			char_render_width += (size_t)properties->charwidth;
-			cluster_pos += (size_t)cp_sz;
-		}
+		auto properties = duckdb::utf8proc_get_property(codepoint);
+		size_t char_render_width = (size_t)properties->charwidth;
 		if ((int)(render_width + char_render_width) > max_width) {
 			if (n) {
 				*n = (int)render_width;

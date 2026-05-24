@@ -20,7 +20,7 @@ mod value;
 
 use crate::options::CommandLineOption;
 use crate::session::Session;
-use crate::state::{InitialAction, MetadataResult, ShellState, StartupText};
+use crate::state::{BailOnError, InitialAction, InputMode, MetadataResult, ShellState, StartupText};
 use std::ffi::{CStr, CString};
 use std::io::Write;
 
@@ -83,6 +83,7 @@ fn process_duckdbrc(
     session: &mut Session,
     file_override: Option<&str>,
 ) -> bool {
+    let default_duckdb_rc = file_override.is_none();
     let path = if let Some(file_override) = file_override {
         file_override.to_string()
     } else {
@@ -96,8 +97,12 @@ fn process_duckdbrc(
     let file = match std::fs::File::open(&path) {
         Ok(f) => f,
         Err(_) => {
-            // Missing ~/.duckdbrc (or -init file) is not an error
-            return true;
+            if default_duckdb_rc {
+                return true;
+            }
+            print_database_error(&format!("IO Error: Failed to open file \"{}\"", path));
+            state.duckdb_rc_path = Some(path);
+            return false;
         }
     };
 
@@ -105,9 +110,9 @@ fn process_duckdbrc(
 
     let reader = std::io::BufReader::new(file);
     let mode = if state.stdin_is_interactive {
-        crate::state::InputMode::DuckDbRc
+        InputMode::DuckDbRc
     } else {
-        crate::state::InputMode::File
+        InputMode::File
     };
     let rc = repl::process_reader(state, session, reader, mode, false);
     rc == 0
@@ -288,10 +293,19 @@ fn main() {
         Some(state.initFile.clone())
     };
 
-    if !process_duckdbrc(&mut state, &mut session, init_file.as_deref()) && state.bail_on_error {
-        db::close_db(&mut session.db, &mut session.con);
-        signals::clear_connection();
-        std::process::exit(1);
+    if state.run_init && !process_duckdbrc(&mut state, &mut session, init_file.as_deref()) {
+        let bail_on_init_fail = state.bail != BailOnError::DontBail;
+        if bail_on_init_fail {
+            if let Some(path) = state.duckdb_rc_path.as_deref() {
+                print_database_error(&format!(
+                    "Encountered errors while executing init file \"{}\". Exiting.",
+                    path
+                ));
+            }
+            db::close_db(&mut session.db, &mut session.con);
+            signals::clear_connection();
+            std::process::exit(1);
+        }
     }
     // ~/.duckdbrc may set TimeZone; keep Rust-side timestamptz formatting in sync.
     db::sync_process_timezone(&mut state, session.con);
@@ -320,7 +334,7 @@ fn main() {
         std::process::exit(0);
     }
 
-    let mut run_initial_actions = |state: &mut ShellState, session: &mut Session| -> i32 {
+    let run_initial_actions = |state: &mut ShellState, session: &mut Session| -> i32 {
         let mut rc: i32 = 0;
         let initial_commands = state.initial_commands.clone();
         for action in &initial_commands {
@@ -335,23 +349,21 @@ fn main() {
                     }
                 }
                 InitialAction::File { path, bail_on_error } => {
-                    let old_bail = state.bail_on_error;
-                    state.bail_on_error = *bail_on_error;
+                    let old_bail = state.bail;
+                    state.bail = if *bail_on_error {
+                        BailOnError::Bail
+                    } else {
+                        BailOnError::DontBail
+                    };
                     let file = std::fs::File::open(path);
                     rc = if let Ok(file) = file {
                         let reader = std::io::BufReader::new(file);
-                        repl::process_reader(
-                            state,
-                            session,
-                            reader,
-                            crate::state::InputMode::File,
-                            false,
-                        )
+                        repl::process_reader(state, session, reader, InputMode::File, false)
                     } else {
                         print_database_error(&format!("Failed to read file \"{}\"", path));
                         1
                     };
-                    state.bail_on_error = old_bail;
+                    state.bail = old_bail;
                     if rc != 0 && *bail_on_error {
                         return rc;
                     }
@@ -370,7 +382,7 @@ fn main() {
                     rc = state.exit_code.unwrap_or(0);
                     break;
                 }
-                if rc != 0 && state.bail_on_error {
+                if rc != 0 && state.get_bail_on_error(InputMode::File) {
                     break;
                 }
             }
@@ -392,7 +404,7 @@ fn main() {
             signals::clear_connection();
             std::process::exit(rc);
         }
-        if rc != 0 && state.bail_on_error {
+        if rc != 0 && state.command_line_command_bail() {
             db::close_db(&mut session.db, &mut session.con);
             signals::clear_connection();
             std::process::exit(rc);
@@ -408,7 +420,7 @@ fn main() {
                     &mut state,
                     &mut session,
                     stdin.lock(),
-                    crate::state::InputMode::Standard,
+                    InputMode::Standard,
                     true,
                 )
             }
@@ -424,7 +436,7 @@ fn main() {
         signals::clear_connection();
         std::process::exit(rc);
     }
-    if rc != 0 && state.bail_on_error {
+    if rc != 0 && state.command_line_command_bail() {
         db::close_db(&mut session.db, &mut session.con);
         signals::clear_connection();
         std::process::exit(rc);
@@ -435,7 +447,7 @@ fn main() {
         &mut state,
         &mut session,
         stdin.lock(),
-        crate::state::InputMode::Standard,
+        InputMode::Standard,
         false,
     );
     db::close_db(&mut session.db, &mut session.con);

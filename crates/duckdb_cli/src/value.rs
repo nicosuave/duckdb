@@ -644,6 +644,12 @@ pub fn vector_value_to_string(
             unsafe {
                 let ptr = data as *const duckdb_sys::duckdb_timestamp;
                 let micros = (*ptr.add(row as usize)).micros;
+                if micros == i64::MAX {
+                    return Some("infinity".to_string());
+                }
+                if micros == i64::MIN {
+                    return Some("-infinity".to_string());
+                }
                 format_timestamp_tz_local(micros)
             }
             #[cfg(not(any(target_os = "macos", target_os = "linux")))]

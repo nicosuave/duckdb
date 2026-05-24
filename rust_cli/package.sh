@@ -3,8 +3,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-version="${DUCKDB_VENDOR_VERSION:-1.4.3}"
+version="${DUCKDB_VENDOR_VERSION:-1.5.3}"
 out_dir="${OUT_DIR:-$PWD/rust_cli/dist}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
 
 os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
@@ -59,7 +60,7 @@ mkdir -p "${out_dir}/${pkg_name}"
 
 cargo build -p duckdb_cli --release
 
-cp -f "$PWD/target/release/duckdb_cli" "${out_dir}/${pkg_name}/duckdb"
+cp -f "${CARGO_TARGET_DIR}/release/duckdb_cli" "${out_dir}/${pkg_name}/duckdb"
 cp -f "${lib_path}" "${out_dir}/${pkg_name}/libduckdb.${lib_ext}"
 cp -R "${include_dir}" "${out_dir}/${pkg_name}/include"
 

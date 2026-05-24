@@ -50,7 +50,7 @@ The highest-risk surface is behavior parity, not just linking a newer `libduckdb
 | Rendering modes | All main modes implemented | Run and patch against full `v1.5.3` rendering oracle | P0 | `tools/shell/tests/test_rendering_mode_regression.py` |
 | JSON and JSON Lines | Existing implementation has typed JSON coverage | Verify nested list, struct, map, JSON logical type, booleans, decimals, infinity, NaN, and empty results | P0 | JSON/jsonlines tests |
 | DuckBox | Large manual port | Reconcile `max_rows`, `max_width`, `max_analyze_rows`, hidden rows/columns, footer hints, wrapping, truncation, large numbers | P0 | `test_large_value_rendering.py`, `test_shell_rendering.py` |
-| Table metadata rendering | Implemented manually | Verify `.tables`, `.databases`, `show tables`, `show schemas`, `DESCRIBE`, attached DBs, search path, long names | P0 | `test_table_metadata_rendering.py`, `test_schema_metadata_rendering.py` |
+| Table metadata rendering | Implemented manually | Verify `.tables`, `.databases`, `show tables`, `show schemas`, `DESCRIBE`, attached DBs, search path, long names | P0 | `test_table_metadata_rendering.py`, `test_schema_schema_qualified_abort.py` |
 | Pager | Implemented, with extra column threshold support | Match official `automatic/on/off`, env precedence, batch disable, output-file disable, no pager for dump formats | P1 | `tools/shell/tests/test_pager.py` |
 | Prompt | Parser validation exists, dynamic rendering is likely partial | Implement or verify `{setting}`, `{sql}`, `{color}`, `{highlight_element}`, `{max_length}`, dynamic DB/schema prompt | P1 | `tools/shell/tests/test_prompt.py` |
 | Progress bar | State and components exist, parity not fully validated | Match component renderer for percent, ETA, bytes read/written, memory, swap, alignment, min size, hide-if-contains | P2 | Manual long-query smoke plus focused tests |
@@ -97,6 +97,7 @@ The highest-risk surface is behavior parity, not just linking a newer `libduckdb
 Run these from the Rust CLI worktree.
 
 ```bash
+export CARGO_TARGET_DIR="$PWD/target"
 git status --short
 git branch --show-current
 ```
@@ -134,7 +135,7 @@ bash rust_cli/run_shell_tests.sh tools/shell/tests/test_rendering_mode_regressio
 bash rust_cli/run_shell_tests.sh tools/shell/tests/test_large_value_rendering.py
 bash rust_cli/run_shell_tests.sh tools/shell/tests/test_shell_rendering.py
 bash rust_cli/run_shell_tests.sh tools/shell/tests/test_table_metadata_rendering.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_schema_metadata_rendering.py
+bash rust_cli/run_shell_tests.sh tools/shell/tests/test_schema_schema_qualified_abort.py
 bash rust_cli/run_shell_tests.sh tools/shell/tests/test_open.py
 bash rust_cli/run_shell_tests.sh tools/shell/tests/test_dump.py
 bash rust_cli/run_shell_tests.sh tools/shell/tests/test_import.py
@@ -175,6 +176,31 @@ Manual smoke checks:
 - Linux package path is verified or documented with the exact remaining blocker.
 - The final commit message mentions the `1.5.3` upgrade scope and test result summary.
 
+## Verification Record
+
+Recorded on 2026-05-24 from macOS on branch `rust-cli`.
+
+| Check | Result |
+|---|---|
+| `CARGO_TARGET_DIR=$PWD/target DUCKDB_VENDOR_VERSION=1.5.3 DUCKDB_LIB_SOURCE=repo cargo build -p duckdb_cli` | Pass |
+| `CARGO_TARGET_DIR=$PWD/target cargo test -p duckdb_cli` | Pass, 0 unit tests |
+| `DUCKDB_VENDOR_VERSION=1.5.3 bash rust_cli/package.sh` | Pass, produced `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz` |
+| `bash rust_cli/run_shell_tests.sh` | Pass, `487 passed, 2 skipped` |
+| Focused high-risk shell slice | Pass, `277 passed, 1 skipped` |
+| `tools/shell/tests/test_command_line_arguments.py` | Pass, `9 passed` |
+| `tools/shell/tests/test_rendering_mode_regression.py` | Pass, `34 passed` |
+| `tools/shell/tests/test_interactive_startup.py::test_interactive_edit_opens_editor_and_executes` | Pass, `1 passed` |
+| `tools/shell/tests/test_duckbox_unicode_width_zwj.py` | Pass, `1 passed` |
+| `bash rust_cli/diff_shells.sh rust_cli/parity_smoke.sql` | Pass |
+| `bash rust_cli/diff_shells.sh rust_cli/parity_modes_more.sql` | Pass |
+| `bash rust_cli/diff_shells.sh rust_cli/parity_render_quirks.sql` | Pass |
+| `bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json.sql` | Pass |
+| `bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json_more.sql` | Pass |
+| Manual smoke: `-h`, `-jsonlines`, `--no-init`, `-safe` | Pass |
+| Linux packaging | Not run on this macOS host; script has Linux platform selection, but the Linux artifact still needs a Linux host or CI run. |
+
+The current build still emits pre-existing Rust warnings for unused helpers and two `total_render_length` assignments in `exec.rs`.
+
 ## Notes For Future Agents
 
 - Do not treat this as only a `libduckdb` bump. The `1.5.x` CLI added a large behavior surface.
@@ -182,3 +208,4 @@ Manual smoke checks:
 - Keep the original `rust_cli/PLAN.md` as the historical `1.4.3` implementation plan.
 - Add targeted regression tests when a parity mismatch is found.
 - Keep Windows out of scope unless the user explicitly expands the goal.
+- The Rust REPL handles `.edit` and `\e`; vendored linenoise editor interception is disabled to avoid C++ exceptions unwinding over the Rust FFI boundary.

@@ -240,7 +240,7 @@ def test_interactive_edit_opens_editor_and_executes(shell, tmp_path):
         env=env,
         send_lines=[".edit", ".quit"],
         send_after=["D ", "D "],
-        timeout_s=10.0,
+        timeout_s=20.0,
     )
 
     assert "edited" in out

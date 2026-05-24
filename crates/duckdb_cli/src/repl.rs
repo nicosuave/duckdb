@@ -2,9 +2,13 @@ use crate::exec;
 use crate::history;
 use crate::session::Session;
 use crate::state::{InputMode, ReadLineVersion, ShellState, StartupText};
+use std::env;
 use std::ffi::{CStr, CString};
+use std::fs::{self, OpenOptions};
 use std::io::{BufRead, Write};
 use std::os::raw::{c_char, c_void};
+use std::path::PathBuf;
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -62,6 +66,113 @@ fn print_stdout(msg: &str) {
 fn print_stderr(msg: &str) {
     let mut stderr = std::io::stderr().lock();
     let _ = stderr.write_all(msg.as_bytes());
+}
+
+fn is_edit_command_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed == ".edit" || trimmed == "\\e"
+}
+
+fn shell_quote_single(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('\'');
+    for ch in value.chars() {
+        if ch == '\'' {
+            out.push_str("'\\''");
+        } else {
+            out.push(ch);
+        }
+    }
+    out.push('\'');
+    out
+}
+
+fn edit_buffer_with_external_editor(initial_sql: &str) -> Result<String, String> {
+    let editor = env::var("DUCKDB_EDITOR")
+        .ok()
+        .or_else(|| env::var("EDITOR").ok())
+        .or_else(|| env::var("VISUAL").ok())
+        .unwrap_or_else(|| "vi".to_string());
+
+    let mut file = None;
+    let mut path = PathBuf::new();
+    for attempt in 0..100 {
+        let mut candidate = env::temp_dir();
+        candidate.push(format!(
+            "duckdb.edit.{}.{}.sql",
+            std::process::id(),
+            attempt
+        ));
+        match OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&candidate)
+        {
+            Ok(f) => {
+                file = Some(f);
+                path = candidate;
+                break;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => {
+                return Err(format!(
+                    "could not open temporary file \"{}\": {}",
+                    candidate.display(),
+                    e
+                ));
+            }
+        }
+    }
+    let Some(mut file) = file else {
+        return Err("could not create temporary edit file".to_string());
+    };
+    if let Err(e) = file.write_all(initial_sql.as_bytes()) {
+        let _ = fs::remove_file(&path);
+        return Err(format!("failed to write data {}: {}", path.display(), e));
+    }
+    drop(file);
+
+    #[cfg(not(target_os = "windows"))]
+    let status = if editor.chars().any(|ch| ch.is_whitespace()) {
+        Command::new("/bin/sh")
+            .arg("-c")
+            .arg(format!(
+                "exec {} {}",
+                editor,
+                shell_quote_single(path.to_string_lossy().as_ref())
+            ))
+            .status()
+    } else {
+        Command::new(&editor).arg(&path).status()
+    };
+
+    #[cfg(target_os = "windows")]
+    let status = Command::new(&editor).arg(&path).status();
+
+    match status {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            let _ = fs::remove_file(&path);
+            return Err(format!(
+                "could not start editor \"{}\": exit status {}",
+                editor, status
+            ));
+        }
+        Err(e) => {
+            let _ = fs::remove_file(&path);
+            return Err(format!("could not start editor \"{}\": {}", editor, e));
+        }
+    }
+
+    let edited = match fs::read_to_string(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            let _ = fs::remove_file(&path);
+            return Err(format!("failed to open file {}: {}", path.display(), e));
+        }
+    };
+    let _ = fs::remove_file(&path);
+    Ok(edited)
 }
 
 fn line_contains_semicolon(bytes: &[u8]) -> bool {
@@ -382,6 +493,7 @@ pub fn process_stdin_interactive(state: &mut ShellState, session: &mut Session) 
     let mut err_cnt: i32 = 0;
     let mut exit_code: Option<i32> = None;
     let mut sql_buf = String::new();
+    let mut last_editable_sql = String::new();
     let mut ctrl_c_count: u32 = 0;
 
     #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -474,6 +586,49 @@ pub fn process_stdin_interactive(state: &mut ShellState, session: &mut Session) 
             continue;
         }
 
+        if is_edit_command_line(&line) {
+            if (state.shellFlgs & (crate::state::ShellFlags::SHFLG_Echo as u32)) != 0 {
+                print_stdout(&line);
+                print_stdout("\n");
+            }
+            let initial_sql = if sql_buf.is_empty() {
+                last_editable_sql.as_str()
+            } else {
+                sql_buf.as_str()
+            };
+            match edit_buffer_with_external_editor(initial_sql) {
+                Ok(edited) => {
+                    if edited.trim().is_empty() {
+                        sql_buf.clear();
+                        continue;
+                    }
+                    if line_contains_semicolon(edited.as_bytes()) && sql_is_complete(&edited) {
+                        if state.rl_version == ReadLineVersion::Linenoise {
+                            if let Ok(c) = CString::new(edited.as_str()) {
+                                let _ = unsafe { duckdb_linenoise::linenoiseHistoryAdd(c.as_ptr()) };
+                            }
+                        }
+                        let executed_sql = edited.trim_end_matches('\n').to_string();
+                        let rc = run_sql_buffer(state, session, &edited, InputMode::Standard);
+                        last_editable_sql = executed_sql;
+                        if rc != 0 {
+                            err_cnt += 1;
+                        }
+                        sql_buf.clear();
+                    } else {
+                        sql_buf.clear();
+                        sql_buf.push_str(edited.trim_start_matches(|c: char| c.is_whitespace()));
+                    }
+                }
+                Err(e) => {
+                    print_stderr(&format!("{}\n", e));
+                    err_cnt += 1;
+                    sql_buf.clear();
+                }
+            }
+            continue;
+        }
+
         if sql_buf.is_empty() && (line.starts_with('.') || line.starts_with('#')) {
             if (state.shellFlgs & (crate::state::ShellFlags::SHFLG_Echo as u32)) != 0 {
                 print_stdout(&line);
@@ -522,6 +677,7 @@ pub fn process_stdin_interactive(state: &mut ShellState, session: &mut Session) 
                 if rc != 0 {
                     err_cnt += 1;
                 }
+                last_editable_sql = sql_buf.trim_end_matches('\n').to_string();
                 sql_buf.clear();
             } else if all_whitespace_sqlite_style(&sql_buf) {
                 if (state.shellFlgs & (crate::state::ShellFlags::SHFLG_Echo as u32)) != 0 {
@@ -608,7 +764,10 @@ pub fn process_reader<R: BufRead>(
     let mut mode = mode;
 
     loop {
-        if err_cnt != 0 && state.bail_on_error && !(interactive && mode == InputMode::Standard) {
+        if err_cnt != 0
+            && state.get_bail_on_error(mode)
+            && !(interactive && mode == InputMode::Standard)
+        {
             break;
         }
 

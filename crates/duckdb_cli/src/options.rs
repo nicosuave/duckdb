@@ -1,5 +1,5 @@
 use crate::candidates;
-use crate::state::{InitialAction, MetadataResult, RenderMode, ShellFlags, ShellState};
+use crate::state::{BailOnError, InitialAction, MetadataResult, RenderMode, ShellFlags, ShellState};
 
 pub struct CommandLineOption {
     pub option: &'static str,
@@ -32,7 +32,7 @@ fn toggle_csv_mode(state: &mut ShellState, _args: &[String]) -> MetadataResult {
 }
 
 fn enable_bail(state: &mut ShellState, _args: &[String]) -> MetadataResult {
-    state.bail_on_error = true;
+    state.bail = BailOnError::Bail;
     MetadataResult::Success
 }
 
@@ -117,11 +117,16 @@ fn set_init_file(state: &mut ShellState, args: &[String]) -> MetadataResult {
     MetadataResult::Success
 }
 
+fn skip_init(state: &mut ShellState, _args: &[String]) -> MetadataResult {
+    state.run_init = false;
+    MetadataResult::Success
+}
+
 fn run_command_exit(state: &mut ShellState, args: &[String]) -> MetadataResult {
     state.readStdin = false;
     state.initial_commands.push(InitialAction::Command {
         text: args[1].clone(),
-        bail_on_error: true,
+        bail_on_error: state.command_line_command_bail(),
     });
     state.exit_after_initial_commands = true;
     MetadataResult::Success
@@ -130,7 +135,7 @@ fn run_command_exit(state: &mut ShellState, args: &[String]) -> MetadataResult {
 fn run_command_keep_running(state: &mut ShellState, args: &[String]) -> MetadataResult {
     state.initial_commands.push(InitialAction::Command {
         text: args[1].clone(),
-        bail_on_error: state.bail_on_error,
+        bail_on_error: state.command_line_command_bail(),
     });
     MetadataResult::Success
 }
@@ -140,7 +145,7 @@ fn process_file_and_exit(state: &mut ShellState, args: &[String]) -> MetadataRes
     state.stdin_is_interactive = false;
     state.initial_commands.push(InitialAction::File {
         path: args[1].clone(),
-        bail_on_error: true,
+        bail_on_error: state.get_bail_on_error(crate::state::InputMode::File),
     });
     state.exit_after_initial_commands = true;
     MetadataResult::Success
@@ -259,12 +264,20 @@ pub static COMMAND_LINE_OPTIONS: &[CommandLineOption] = &[
         description: "turn headers on",
     },
     CommandLineOption {
+        option: "h",
+        argument_count: 0,
+        arguments: "",
+        pre_init_callback: Some(enable_batch),
+        post_init_callback: Some(print_help_and_exit),
+        description: "show help message",
+    },
+    CommandLineOption {
         option: "help",
         argument_count: 0,
         arguments: "",
         pre_init_callback: Some(enable_batch),
         post_init_callback: Some(print_help_and_exit),
-        description: "show this message",
+        description: "show help message",
     },
     CommandLineOption {
         option: "html",
@@ -289,6 +302,14 @@ pub static COMMAND_LINE_OPTIONS: &[CommandLineOption] = &[
         pre_init_callback: None,
         post_init_callback: Some(|s, _| toggle_mode(s, RenderMode::JSON)),
         description: "set output mode to 'json'",
+    },
+    CommandLineOption {
+        option: "jsonlines",
+        argument_count: 0,
+        arguments: "",
+        pre_init_callback: None,
+        post_init_callback: Some(|s, _| toggle_mode(s, RenderMode::JSONLINES)),
+        description: "set output mode to 'jsonlines'",
     },
     CommandLineOption {
         option: "line",
@@ -321,6 +342,14 @@ pub static COMMAND_LINE_OPTIONS: &[CommandLineOption] = &[
         pre_init_callback: None,
         post_init_callback: Some(set_newline_separator),
         description: "set output row separator. Default: '\\n'",
+    },
+    CommandLineOption {
+        option: "no-init",
+        argument_count: 0,
+        arguments: "",
+        pre_init_callback: Some(skip_init),
+        post_init_callback: None,
+        description: "skip processing the init file",
     },
     CommandLineOption {
         option: "no-stdin",

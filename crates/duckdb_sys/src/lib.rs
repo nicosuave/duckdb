@@ -6,7 +6,7 @@ use std::os::raw::{c_char, c_int, c_void};
 
 // NOTE: This is intentionally a "normalized" version (major.minor.patch),
 // matching the prefix extracted from duckdb_library_version().
-pub const DUCKDB_TARGET_VERSION: &str = "1.4.3";
+pub const DUCKDB_TARGET_VERSION: &str = "1.5.3";
 
 pub type duckdb_database = *mut c_void;
 pub type duckdb_connection = *mut c_void;
