@@ -6,13 +6,32 @@ Branch: `rust-cli`
 
 Baseline commit: `abcd5d8929 Add Rust CLI for DuckDB`
 
+Documentation commit: `ce57524657 Document Rust CLI 1.5.3 upgrade goal`
+
+Completion commit: `c7055eac2c Upgrade Rust CLI to DuckDB 1.5.3`
+
 Target DuckDB release: `v1.5.3`
+
+Status: complete for the macOS Rust CLI upgrade path. Linux packaging remains a documented external verification item because it needs a Linux host or CI run.
 
 ## Objective
 
 Upgrade the Rust DuckDB CLI from its current DuckDB `1.4.3` target to DuckDB `1.5.3`, preserving drop-in CLI behavior against the official shell test suite and the Rust-specific parity tests already added on the branch.
 
-The upgrade is complete when the Rust CLI builds, packages, and passes the relevant `v1.5.3` shell behavior tests with matching stdout, stderr, and exit-code behavior on macOS and Linux.
+The implementation pass is complete when the Rust CLI builds, packages, and passes the relevant `v1.5.3` shell behavior tests with matching stdout, stderr, and exit-code behavior on macOS, with Linux package verification either run on a Linux host or documented as the remaining external check.
+
+## Completion Summary
+
+| Item | Result |
+|---|---|
+| Final implementation commit | `c7055eac2c Upgrade Rust CLI to DuckDB 1.5.3` |
+| Working tree after commit | Clean on `rust-cli` |
+| Runtime target | DuckDB `1.5.3` |
+| macOS package | Produced `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz` |
+| Full shell suite | Pass, `487 passed, 2 skipped` |
+| Parity diff scripts | Pass |
+| Cargo test | Pass, `cargo test -p duckdb_cli` |
+| Linux package | Not run on macOS host; run on Linux host or CI before publishing a Linux artifact |
 
 ## Context
 
