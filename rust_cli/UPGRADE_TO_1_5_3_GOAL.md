@@ -1,230 +1,97 @@
-# Rust CLI DuckDB 1.5.3 Upgrade Goal
+# Rust CLI DuckDB 1.5.x Upgrade Goal
 
 Date: 2026-05-24
 
 Branch: `rust-cli`
 
-Baseline commit: `abcd5d8929 Add Rust CLI for DuckDB`
-
-Documentation commit: `ce57524657 Document Rust CLI 1.5.3 upgrade goal`
-
-Completion commit: `c7055eac2c Upgrade Rust CLI to DuckDB 1.5.3`
-
 Target DuckDB release: `v1.5.3`
 
-Status: complete for the macOS Rust CLI upgrade path. Linux packaging remains a documented external verification item because it needs a Linux host or CI run.
+Status: complete for the larger DuckDB Rust CLI 1.5.x parity changeset on macOS and Linux arm64 packaging.
 
 ## Objective
 
-Upgrade the Rust DuckDB CLI from its current DuckDB `1.4.3` target to DuckDB `1.5.3`, preserving drop-in CLI behavior against the official shell test suite and the Rust-specific parity tests already added on the branch.
+Implement the larger DuckDB Rust CLI 1.5.x changeset, not just document it:
 
-The implementation pass is complete when the Rust CLI builds, packages, and passes the relevant `v1.5.3` shell behavior tests with matching stdout, stderr, and exit-code behavior on macOS, with Linux package verification either run on a Linux host or documented as the remaining external check.
+- Retarget the Rust CLI from DuckDB `1.4.3` to DuckDB `1.5.3`.
+- Close the high-risk CLI parity gaps found during the 1.5.x assessment.
+- Verify the full macOS shell behavior suite and parity diff scripts against the official `v1.5.3` shell.
+- Verify Linux packaging in a Linux arm64 Docker environment.
+- Commit the completed changeset only after verification.
 
-## Completion Summary
+## Completed Changeset
 
-| Item | Result |
-|---|---|
-| Final implementation commit | `c7055eac2c Upgrade Rust CLI to DuckDB 1.5.3` |
-| Working tree after commit | Clean on `rust-cli` |
-| Runtime target | DuckDB `1.5.3` |
-| macOS package | Produced `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz` |
-| Full shell suite | Pass, `487 passed, 2 skipped` |
-| Parity diff scripts | Pass |
-| Cargo test | Pass, `cargo test -p duckdb_cli` |
-| Linux package | Not run on macOS host; run on Linux host or CI before publishing a Linux artifact |
-
-## Context
-
-The Rust CLI branch is already a full Rust implementation of the newer DuckDB shell UX shape. It is not a rewrite of the old SQLite-wrapper shell. The branch was created after much of the upstream C++ shell refactor had landed, but the Rust implementation still pins and packages DuckDB `1.4.3`.
-
-The official DuckDB CLI changed substantially across `v1.4.3 -> v1.5.3`:
-
-| Scope | Change size |
-|---|---:|
-| `tools/shell` plus `tools/sqlite3_api_wrapper` | 72 files, 12197 insertions, 22758 deletions |
-| `tools/shell/tests` | 21 files, 3206 insertions, 231 deletions |
-| Shell test files | 18 to 31 |
-| Approximate shell test definitions | 197 to 300 |
-
-The highest-risk surface is behavior parity, not just linking a newer `libduckdb`.
+| Area | Result | Verification |
+|---|---|---|
+| Runtime and packaging target | Default vendor/runtime/package target is DuckDB `1.5.3`. | `./target/debug/duckdb_cli -version`, macOS and Linux package smoke tests |
+| Linux portability | Fixed `duckdb_open_ext` error pointer typing for Linux arm64 bindings. | Linux arm64 Docker package build |
+| Prompt rendering | Added dynamic prompt parser/rendering for `{setting}`, `{sql}`, `{color}`, `{highlight_element}`, `{max_length}`, and default `memory D` prompt behavior. | `tools/shell/tests/test_prompt.py`, full shell suite |
+| Prompt validation | `.prompt` validates only the main prompt and leaves continuation prompts literal, matching official behavior. | `tools/shell/tests/test_prompt.py` |
+| Progress bar templates | Added validation for progress-bar template components and alignment wrappers. | `tools/shell/tests/test_prompt.py` |
+| Help metadata | Added `.help shortcuts` and aligned `.help` text/footer details for 1.5.x command metadata. | `tools/shell/tests/test_help_visibility.py`, `test_help_no_ansi.py` |
+| Storage version CLI | Aligned invalid `-storage-version` handling with the 1.5.3 CLI error shape. | `tools/shell/tests/test_command_line_arguments.py` |
+| Pager behavior | Aligned `.pager` status text, rejected unsupported `set_column_threshold`, and disabled pager for non-interactive stdin. | `tools/shell/tests/test_pager.py` |
+| Colors and highlighting | Matched `.display_colors` tie ordering and retained highlight-mode behavior. | `tools/shell/tests/test_display_colors.py`, highlighting tests |
+| Warnings/logging | Added duplicate warning suppression and log-level ANSI styling. | `tools/shell/tests/test_warning.py`, `test_logging.py` |
+| Interactive readline | Updated vendored 1.5.3 linenoise ABI and Rust FFI for completion type/score/extra char plus seeded reverse search. | `tools/shell/tests/test_autocomplete.py`, `test_interactive_startup.py`, PTY tests |
+| Vendored linenoise | Replaced the 1.5.3 linenoise vendor tree and added minimal shell shims needed for Rust integration. | macOS build, Linux build, full shell suite |
+| Tests | Added focused regression coverage for every parity gap fixed in this pass. | Full shell suite and targeted shell slice |
 
 ## Upgrade Inventory
 
-| Area | Current Rust CLI status | Required upgrade | Priority | Verification |
-|---|---|---|---:|---|
-| DuckDB runtime/version | Defaults to `1.4.3` in `crates/duckdb_cli/build.rs`, `crates/duckdb_sys/build.rs`, and `rust_cli/package.sh` | Bump default vendor target to `1.5.3`; verify vendor layout, headers, library naming, and runtime version check | P0 | Build and runtime version smoke |
-| C API bindings | Uses committed/generated bindings for the current target | Regenerate or update `duckdb_sys` bindings for `1.5.3`; verify optional dynamic symbols still resolve | P0 | `cargo build -p duckdb_cli` |
-| Packaging | Produces `duckdb-rust-cli-1.4.3-*` artifacts | Produce `duckdb-rust-cli-1.5.3-*` artifacts for macOS and Linux | P0 | `DUCKDB_VENDOR_VERSION=1.5.3 bash rust_cli/package.sh` |
-| CLI flags | Missing `-h`, command-line `-jsonlines`, and `--no-init` | Add flags to `crates/duckdb_cli/src/options.rs`; implement init skipping | P0 | `tools/shell/tests/test_command_line_arguments.py`, `test_shell_basics.py` |
-| Init and rc handling | Has `.duckdbrc` and `-init`, no skip flag | Match `run_init=false` behavior and init failure handling in `v1.5.3` | P0 | Init and command-line tests |
-| Bail behavior | Boolean `bail_on_error` | Replace with tri-state `auto`, `on`, `off`; update `.bail`, `-bail`, `-cmd`, `-c`, `-s`, `-f`, `.read`, and init handling | P0 | Bail tests in shell suite |
-| `.help shortcuts` | Not implemented | Add shortcut help for Rust line editor, or explicitly map to current linenoise shortcut table | P1 | `.help shortcuts` transcript |
-| `-storage-version` | Present as config string | Verify `1.5.3` accepted values and error behavior match official shell | P1 | Command-line argument tests |
-| Dot-command metadata | Broad command table already exists | Reconcile command ordering, match sizes, help text, aliases, and extended help with `v1.5.3` | P1 | `.help`, `.help --all`, completion tests |
-| `.open` | Implements `--sql`, `--new`, `--nofollow`, `--readonly` | Verify current `v1.5.3` errors and file-relation behavior for DuckDB, Parquet, CSV, SQL expressions | P0 | `tools/shell/tests/test_open.py` |
-| `.dump` | Implemented with known parity fixes | Verify schema-qualified tables, quoted schemas/tables, views, indexes, blobs, newlines, ordering | P0 | `tools/shell/tests/test_dump.py` |
-| `.import` | Implemented | Verify CSV, JSON, Parquet and generic reader parameter behavior | P1 | `tools/shell/tests/test_import.py` |
-| Last result `_` | Implemented through temp table and replacement scan | Verify no-result error, errors not clobbering `_`, chained `_`, and temp table lifetime | P0 | `tools/shell/tests/test_last_result.py` |
-| `.last` | Implemented for DuckBox untruncation | Verify full-result replay and truncation hints | P1 | `test_last_result.py`, Rust parity tests |
-| Rendering modes | All main modes implemented | Run and patch against full `v1.5.3` rendering oracle | P0 | `tools/shell/tests/test_rendering_mode_regression.py` |
-| JSON and JSON Lines | Existing implementation has typed JSON coverage | Verify nested list, struct, map, JSON logical type, booleans, decimals, infinity, NaN, and empty results | P0 | JSON/jsonlines tests |
-| DuckBox | Large manual port | Reconcile `max_rows`, `max_width`, `max_analyze_rows`, hidden rows/columns, footer hints, wrapping, truncation, large numbers | P0 | `test_large_value_rendering.py`, `test_shell_rendering.py` |
-| Table metadata rendering | Implemented manually | Verify `.tables`, `.databases`, `show tables`, `show schemas`, `DESCRIBE`, attached DBs, search path, long names | P0 | `test_table_metadata_rendering.py`, `test_schema_schema_qualified_abort.py` |
-| Pager | Implemented, with extra column threshold support | Match official `automatic/on/off`, env precedence, batch disable, output-file disable, no pager for dump formats | P1 | `tools/shell/tests/test_pager.py` |
-| Prompt | Parser validation exists, dynamic rendering is likely partial | Implement or verify `{setting}`, `{sql}`, `{color}`, `{highlight_element}`, `{max_length}`, dynamic DB/schema prompt | P1 | `tools/shell/tests/test_prompt.py` |
-| Progress bar | State and components exist, parity not fully validated | Match component renderer for percent, ETA, bytes read/written, memory, swap, alignment, min size, hide-if-contains | P2 | Manual long-query smoke plus focused tests |
-| Highlighting/colors | Partial 256-color and mode support | Align `.display_colors`, `.highlight_mode`, result/error/table/log color element behavior | P1 | `test_highlighting.py`, Rust color tests |
-| Warnings/logging | `shell_log_storage` exists | Verify warning dedupe, stdout/stderr routing, `warnings_as_errors`, log-level formatting, colors | P1 | `tools/shell/tests/test_warning.py` |
-| Safe mode | Implemented | Verify config locking and restricted commands under `-safe` | P0 | `tools/shell/tests/test_safe_mode.py` |
-| Interactive editing | Rust linenoise shim exists | Verify completion enter handling, reverse search seeded from buffer, Ctrl-C shutdown, multiline/singleline argument checks | P2 | Autocomplete and PTY tests |
-| Width/Unicode | Manual render-width code exists | Verify grapheme clusters, ANSI escapes, tabs, newlines, underflow and divide-by-zero cases | P1 | Large-value, Unicode, and rendering tests |
-| Windows | Existing Rust goal is macOS/Linux only | Keep out of scope unless explicitly added | P3 | None for this goal |
-
-## Execution Plan
-
-1. Establish a clean `v1.5.3` test baseline.
-   - Confirm latest target tag is available locally.
-   - Build official shell at `v1.5.3` if needed for output comparison.
-   - Record official shell behavior for high-risk focused tests.
-
-2. Retarget runtime and bindings.
-   - Change default vendor version from `1.4.3` to `1.5.3`.
-   - Update vendored headers and library lookup paths if needed.
-   - Regenerate or patch C bindings.
-   - Build Rust CLI against `1.5.3`.
-
-3. Fix P0 command semantics.
-   - Add `-h`, `-jsonlines`, `--no-init`.
-   - Replace boolean bail state with tri-state bail.
-   - Align init, rc, file, read, and command bail behavior.
-   - Verify safe mode config locking.
-
-4. Fix P0 behavior parity.
-   - Rendering modes, especially JSON/JSON Lines and DuckBox.
-   - Table metadata rendering.
-   - `.open`, `.dump`, `.last`, and `_`.
-
-5. Fix P1 parity.
-   - Pager, prompt, highlighting, warnings/logging, storage-version, help metadata.
-
-6. Decide on P2/P3 scope.
-   - Progress bar and interactive edge cases should be fixed if they fail current tests.
-   - Windows remains out of scope unless requested.
-
-## Verification Steps
-
-Run these from the Rust CLI worktree.
-
-```bash
-export CARGO_TARGET_DIR="$PWD/target"
-git status --short
-git branch --show-current
-```
-
-Expected:
-
-- Branch is `rust-cli`.
-- No unrelated files are modified.
-
-Build checks:
-
-```bash
-DUCKDB_VENDOR_VERSION=1.5.3 DUCKDB_LIB_SOURCE=repo cargo build -p duckdb_cli
-cargo test -p duckdb_cli
-```
-
-Packaging check:
-
-```bash
-DUCKDB_VENDOR_VERSION=1.5.3 bash rust_cli/package.sh
-```
-
-Full shell-suite check:
-
-```bash
-bash rust_cli/run_shell_tests.sh
-```
-
-Focused high-risk checks:
-
-```bash
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_command_line_arguments.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_shell_basics.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_rendering_mode_regression.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_large_value_rendering.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_shell_rendering.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_table_metadata_rendering.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_schema_schema_qualified_abort.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_open.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_dump.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_import.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_last_result.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_pager.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_warning.py
-bash rust_cli/run_shell_tests.sh tools/shell/tests/test_safe_mode.py
-```
-
-Behavior comparison checks:
-
-```bash
-bash rust_cli/diff_shells.sh rust_cli/parity_smoke.sql
-bash rust_cli/diff_shells.sh rust_cli/parity_modes_more.sql
-bash rust_cli/diff_shells.sh rust_cli/parity_render_quirks.sql
-bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json.sql
-bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json_more.sql
-```
-
-Manual smoke checks:
-
-```bash
-./target/debug/duckdb_cli -h
-./target/debug/duckdb_cli -jsonlines -c "select true as b, [1,2] as xs, {'k': 3} as s"
-./target/debug/duckdb_cli --no-init -c "select 42"
-./target/debug/duckdb_cli -safe -c "set memory_limit='-1'"
-```
-
-## Definition Of Done
-
-- `duckdb_cli` builds against DuckDB `1.5.3`.
-- `duckdb_sys` bindings match the `1.5.3` public C API used by the Rust CLI.
-- Runtime version checks and package names report `1.5.3`.
-- All P0 rows in the upgrade inventory are implemented and verified.
-- The full shell test suite passes through `bash rust_cli/run_shell_tests.sh`, or any remaining skips/failures are documented with explicit rationale.
-- Existing Rust-specific parity tests still pass.
-- macOS package is produced successfully.
-- Linux package path is verified or documented with the exact remaining blocker.
-- The final commit message mentions the `1.5.3` upgrade scope and test result summary.
+| Area | Final status | Notes |
+|---|---|---|
+| DuckDB runtime/version | Done | Builds and reports `v1.5.3`. |
+| C API bindings | Done for used surface | Linux arm64 caught and verified the `c_char` portability fix. |
+| macOS packaging | Done | Produces `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz`. |
+| Linux packaging | Done for arm64 | Produces `/tmp/duckdb-rust-cli-linux-package-out/duckdb-rust-cli-1.5.3-linux-aarch64.tar.gz` in Docker and smoke-runs it. |
+| CLI flags/init/bail/safe mode | Previously implemented and reverified | Covered by the full 1.5.3 shell suite. |
+| `.open`, `.dump`, `.import`, `.last`, `_` | Previously implemented and reverified | Covered by the full 1.5.3 shell suite. |
+| Rendering modes/DuckBox/JSON | Previously implemented and reverified | Covered by the full shell suite and parity diff scripts. |
+| Table metadata rendering | Previously implemented and reverified | Covered by the full 1.5.3 shell suite. |
+| Pager | Done in this pass | Status, rejection, and non-interactive behavior aligned. |
+| Prompt | Done in this pass | Dynamic prompt components now render instead of only validating. |
+| Progress bar | Done for 1.5.x validation surface | Component validation added; full live progress UI remains limited by testability. |
+| Highlighting/colors | Done in this pass | Added display-color ordering regression. |
+| Warnings/logging | Done in this pass | Added duplicate-warning and logging coverage. |
+| Interactive editing | Done in this pass | Completion ABI and reverse search parity covered by PTY tests. |
+| Width/Unicode | Previously implemented and reverified | Covered by full shell suite and parity scripts. |
+| Windows | Out of scope | This goal covers macOS and Linux packaging. |
 
 ## Verification Record
 
-Recorded on 2026-05-24 from macOS on branch `rust-cli`.
+Recorded on 2026-05-24 from branch `rust-cli`.
 
 | Check | Result |
 |---|---|
-| `CARGO_TARGET_DIR=$PWD/target DUCKDB_VENDOR_VERSION=1.5.3 DUCKDB_LIB_SOURCE=repo cargo build -p duckdb_cli` | Pass |
-| `CARGO_TARGET_DIR=$PWD/target cargo test -p duckdb_cli` | Pass, 0 unit tests |
+| `CARGO_TARGET_DIR=/Users/nico/Code/duckdb-rust-cli/target DUCKDB_VENDOR_VERSION=1.5.3 DUCKDB_LIB_SOURCE=repo cargo test -p duckdb_cli` | Pass, 0 Rust unit tests |
+| `bash rust_cli/run_shell_tests.sh tools/shell/tests/test_prompt.py tools/shell/tests/test_help_visibility.py tools/shell/tests/test_help_no_ansi.py tools/shell/tests/test_command_line_arguments.py tools/shell/tests/test_display_colors.py tools/shell/tests/test_highlight_colors_extended.py tools/shell/tests/test_deprecated_highlight_color_aliases.py tools/shell/tests/test_highlight_mode_invalid.py tools/shell/tests/test_highlighting.py tools/shell/tests/test_logging.py tools/shell/tests/test_warning.py tools/shell/tests/test_pager.py tools/shell/tests/test_autocomplete.py tools/shell/tests/test_interactive_startup.py tools/shell/tests/test_interactive_ctrl_a_ctrl_e.py tools/shell/tests/test_interactive_ctrl_c.py tools/shell/tests/test_interactive_ctrl_d.py tools/shell/tests/test_interactive_ctrl_u_ctrl_k.py tools/shell/tests/test_interactive_ctrl_w.py tools/shell/tests/test_interactive_history_navigation.py tools/shell/tests/test_interactive_statement_splitting.py tools/shell/tests/test_sql_is_complete.py tools/shell/tests/test_statement_splitting_edgecases.py tools/shell/tests/test_read_from_stdin.py` | Pass, `132 passed` |
+| `bash rust_cli/run_shell_tests.sh` | Pass, `495 passed, 2 skipped` |
 | `DUCKDB_VENDOR_VERSION=1.5.3 bash rust_cli/package.sh` | Pass, produced `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz` |
-| `bash rust_cli/run_shell_tests.sh` | Pass, `487 passed, 2 skipped` |
-| Focused high-risk shell slice | Pass, `277 passed, 1 skipped` |
-| `tools/shell/tests/test_command_line_arguments.py` | Pass, `9 passed` |
-| `tools/shell/tests/test_rendering_mode_regression.py` | Pass, `34 passed` |
-| `tools/shell/tests/test_interactive_startup.py::test_interactive_edit_opens_editor_and_executes` | Pass, `1 passed` |
-| `tools/shell/tests/test_duckbox_unicode_width_zwj.py` | Pass, `1 passed` |
-| `bash rust_cli/diff_shells.sh rust_cli/parity_smoke.sql` | Pass |
-| `bash rust_cli/diff_shells.sh rust_cli/parity_modes_more.sql` | Pass |
-| `bash rust_cli/diff_shells.sh rust_cli/parity_render_quirks.sql` | Pass |
-| `bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json.sql` | Pass |
-| `bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json_more.sql` | Pass |
-| Manual smoke: `-h`, `-jsonlines`, `--no-init`, `-safe` | Pass |
-| Linux packaging | Not run on this macOS host; script has Linux platform selection, but the Linux artifact still needs a Linux host or CI run. |
+| Linux arm64 Docker package build with `rust:1.90-bookworm` and DuckDB `1.5.3` Linux arm64 library | Pass, produced `/tmp/duckdb-rust-cli-linux-package-out/duckdb-rust-cli-1.5.3-linux-aarch64.tar.gz` |
+| Linux arm64 package smoke: `duckdb -version` | Pass, printed `v1.5.3` |
+| Linux arm64 package smoke: `duckdb -c "select 42 as answer;"` | Pass, returned `42` |
+| `DUCKDB_REF_SHELL=/opt/homebrew/bin/duckdb DUCKDB_RUST_SHELL=./target/debug/duckdb_cli bash rust_cli/diff_shells.sh rust_cli/parity_smoke.sql` | Pass |
+| `DUCKDB_REF_SHELL=/opt/homebrew/bin/duckdb DUCKDB_RUST_SHELL=./target/debug/duckdb_cli bash rust_cli/diff_shells.sh rust_cli/parity_modes_more.sql` | Pass |
+| `DUCKDB_REF_SHELL=/opt/homebrew/bin/duckdb DUCKDB_RUST_SHELL=./target/debug/duckdb_cli bash rust_cli/diff_shells.sh rust_cli/parity_render_quirks.sql` | Pass |
+| `DUCKDB_REF_SHELL=/opt/homebrew/bin/duckdb DUCKDB_RUST_SHELL=./target/debug/duckdb_cli bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json.sql` | Pass |
+| `DUCKDB_REF_SHELL=/opt/homebrew/bin/duckdb DUCKDB_RUST_SHELL=./target/debug/duckdb_cli bash rust_cli/diff_shells.sh rust_cli/parity_duckbox_json_more.sql` | Pass |
 
-The current build still emits pre-existing Rust warnings for unused helpers and two `total_render_length` assignments in `exec.rs`.
+## Definition Of Done
 
-## Notes For Future Agents
+| Requirement | Status |
+|---|---|
+| Rust CLI builds and runs against DuckDB `1.5.3`. | Done |
+| Package names and runtime version report `1.5.3`. | Done |
+| P0/P1/P2 parity gaps found by the 1.5.x assessment are implemented or explicitly scoped. | Done |
+| Full shell suite passes after the final code change. | Done |
+| Targeted parity/oracle checks pass after the final code change. | Done |
+| macOS package is produced successfully. | Done |
+| Linux package path is verified on Linux or CI. | Done on Linux arm64 Docker |
+| Completed changeset is committed after verification. | Done by the commit containing this file |
 
-- Do not treat this as only a `libduckdb` bump. The `1.5.x` CLI added a large behavior surface.
-- Use the official `v1.5.3` shell tests as the oracle.
-- Keep the original `rust_cli/PLAN.md` as the historical `1.4.3` implementation plan.
-- Add targeted regression tests when a parity mismatch is found.
-- Keep Windows out of scope unless the user explicitly expands the goal.
-- The Rust REPL handles `.edit` and `\e`; vendored linenoise editor interception is disabled to avoid C++ exceptions unwinding over the Rust FFI boundary.
+## Follow-Up Notes
+
+- The current build still emits existing Rust warnings for unused helpers and two `total_render_length` assignments in `exec.rs`.
+- Windows packaging remains out of scope until explicitly requested.
+- The Rust REPL keeps the vendored linenoise editor interception disabled to avoid C++ exceptions unwinding over Rust FFI.
+- Future CLI parity work should continue using the official `v1.5.3` shell tests and `rust_cli/diff_shells.sh` scripts as the oracle.

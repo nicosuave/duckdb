@@ -79,6 +79,18 @@ def test_multiple_warnings(shell):
     result.check_stdout("│ [3]     │ [3]     │ [3]     │")
 
 
+def test_multiple_warnings_deduplicated(shell):
+    test = (
+        ShellTest(shell)
+        .statement("SELECT list_transform([1], x -> x);")
+        .statement("SELECT list_transform([1], x -> x);")
+    )
+
+    result = test.run()
+    assert result.stdout.count("WARNING:") == 1
+    result.check_stdout("Deprecated lambda arrow (->) detected.")
+
+
 def test_changing_logging_settings(shell, tmp_path):
     test = ShellTest(shell).statement("CALL enable_logging(storage = 'file', storage_config = {'path': 'hello'});")
 

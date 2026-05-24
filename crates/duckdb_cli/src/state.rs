@@ -290,7 +290,9 @@ impl ShellState {
             render_completion: true,
             render_errors: true,
             highlight_mode: HighlightMode::Automatic,
-            mainPrompt: "D ".to_string(),
+            mainPrompt:
+                "{max_length:40}{highlight_element:prompt}{setting:current_database_and_schema}{color:reset} D "
+                    .to_string(),
             continuePrompt: "· ".to_string(),
             continuePromptSelected: "‣ ".to_string(),
             colSeparator: "|".to_string(),

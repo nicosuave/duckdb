@@ -9,6 +9,7 @@ mod highlight;
 mod history;
 mod options;
 mod output;
+mod prompt;
 mod repl;
 mod session;
 mod shell_ext;
@@ -20,7 +21,9 @@ mod value;
 
 use crate::options::CommandLineOption;
 use crate::session::Session;
-use crate::state::{BailOnError, InitialAction, InputMode, MetadataResult, ShellState, StartupText};
+use crate::state::{
+    BailOnError, InitialAction, InputMode, MetadataResult, ShellState, StartupText,
+};
 use std::ffi::{CStr, CString};
 use std::io::Write;
 
@@ -339,7 +342,10 @@ fn main() {
         let initial_commands = state.initial_commands.clone();
         for action in &initial_commands {
             match action {
-                InitialAction::Command { text, bail_on_error } => {
+                InitialAction::Command {
+                    text,
+                    bail_on_error,
+                } => {
                     rc = exec::run_command(state, session, text);
                     if rc == 2 {
                         return state.exit_code.unwrap_or(0);
@@ -348,7 +354,10 @@ fn main() {
                         return rc;
                     }
                 }
-                InitialAction::File { path, bail_on_error } => {
+                InitialAction::File {
+                    path,
+                    bail_on_error,
+                } => {
                     let old_bail = state.bail;
                     state.bail = if *bail_on_error {
                         BailOnError::Bail

@@ -19,7 +19,9 @@ fn main() {
     let vendor_version = env::var("DUCKDB_VENDOR_VERSION").unwrap_or_else(|_| "1.5.3".to_string());
     let linenoise_dir = env::var_os("DUCKDB_LINENOISE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join(format!("vendor/duckdb/{vendor_version}/linenoise")));
+        .unwrap_or_else(|| {
+            workspace_root.join(format!("vendor/duckdb/{vendor_version}/linenoise"))
+        });
 
     let duckdb_include = env::var_os("DUCKDB_INCLUDE_DIR")
         .map(PathBuf::from)
@@ -27,7 +29,11 @@ fn main() {
     let utf8proc_include = workspace_root.join("third_party/utf8proc/include");
     let sqlite3_api_wrapper_include = env::var_os("DUCKDB_SQLITE3_API_WRAPPER_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join(format!("vendor/duckdb/{vendor_version}/sqlite3_api_wrapper")));
+        .unwrap_or_else(|| {
+            workspace_root.join(format!(
+                "vendor/duckdb/{vendor_version}/sqlite3_api_wrapper"
+            ))
+        });
     let include_dir = linenoise_dir.join("include");
 
     let sources = [
@@ -116,33 +122,6 @@ fn main() {
         panic!("c++ failed with status {status}");
     }
     objects.push(color_mode_obj);
-
-    let toggles_src = manifest_dir.join("src/duckdb_linenoise_render_toggles.cc");
-    println!("cargo:rerun-if-changed={}", toggles_src.display());
-    let toggles_obj = obj_dir.join("duckdb_linenoise_render_toggles.cc.o");
-    let mut cxx = Command::new("c++");
-    cxx.arg("-std=c++17")
-        .arg("-ULINENOISE_LOGGING")
-        .arg(format!("-I{}", include_dir.display()))
-        .arg(format!("-I{}", duckdb_include.display()))
-        .arg(format!("-I{}", utf8proc_include.display()))
-        .arg(format!("-I{}", sqlite3_api_wrapper_include.display()))
-        .arg("-c")
-        .arg(&toggles_src)
-        .arg("-o")
-        .arg(&toggles_obj);
-    let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
-    if target_os == "macos" {
-        cxx.arg("-mmacosx-version-min=11.0");
-    }
-    if target_os == "linux" {
-        cxx.arg("-fPIC");
-    }
-    let status = cxx.status().expect("failed to invoke c++");
-    if !status.success() {
-        panic!("c++ failed with status {status}");
-    }
-    objects.push(toggles_obj);
 
     let lib_path = out_dir.join("libduckdb_linenoise.a");
     let mut ar = Command::new("ar");

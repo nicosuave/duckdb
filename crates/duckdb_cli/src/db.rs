@@ -575,7 +575,7 @@ pub fn open_db_with_overrides(
 
     let db_path = CString::new(state.zDbFilename.as_str()).map_err(|_| 1)?;
     let mut db: duckdb_sys::duckdb_database = std::ptr::null_mut();
-    let mut out_error: *mut i8 = std::ptr::null_mut();
+    let mut out_error: *mut std::os::raw::c_char = std::ptr::null_mut();
     let rc =
         unsafe { duckdb_sys::duckdb_open_ext(db_path.as_ptr(), &mut db, config, &mut out_error) };
     unsafe { duckdb_sys::duckdb_destroy_config(&mut config) };

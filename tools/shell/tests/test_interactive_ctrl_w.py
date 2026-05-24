@@ -7,6 +7,9 @@ import time
 import re
 
 
+PROMPT_RE = r"memory(?:\.[^\r\n ]+)? D ?"
+
+
 def _strip_ansi(s: str) -> str:
     s = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", s)
     s = re.sub(r"\x1b\][^\x07]*\x07", "", s)
@@ -100,8 +103,9 @@ def test_interactive_ctrl_w_deletes_previous_word(shell, tmp_path):
         os.write(master_fd, b".print hello world")
         os.write(master_fd, b"\x17")  # Ctrl-W (delete previous word)
         os.write(master_fd, b"duckdb\r")
-        out = _read_until_re(master_fd, pid, r"(?:\r?\n)hello duckdb(?:\r?\n)D ?")
-        assert re.search(r"(?:\r?\n)hello duckdb(?:\r?\n)D ?", out)
+        pattern = rf"(?:\r?\n)hello duckdb(?:\r?\n){PROMPT_RE}"
+        out = _read_until_re(master_fd, pid, pattern)
+        assert re.search(pattern, out)
         os.write(master_fd, b".quit\r")
     finally:
         try:
@@ -111,4 +115,3 @@ def test_interactive_ctrl_w_deletes_previous_word(shell, tmp_path):
 
 
 # fmt: on
-

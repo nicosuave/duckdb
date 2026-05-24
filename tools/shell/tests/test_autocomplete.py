@@ -7,6 +7,51 @@ from typing import List
 from conftest import ShellTest
 from conftest import autocomplete_extension
 import os
+import pty
+import select
+import time
+import re
+
+
+def _strip_ansi(s: str) -> str:
+    s = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", s)
+    s = re.sub(r"\x1b\][^\x07]*\x07", "", s)
+    return s
+
+
+def _read_until(fd: int, pid: int, needle: str, timeout_s: float = 10.0) -> str:
+    buf = bytearray()
+    recent = bytearray()
+    deadline = time.time() + timeout_s
+
+    while True:
+        if time.time() >= deadline:
+            raise AssertionError(
+                f"timeout waiting for {needle!r}, output so far:\n{buf.decode('utf-8', errors='ignore')}"
+            )
+        exited_pid, status = os.waitpid(pid, os.WNOHANG)
+        if exited_pid != 0:
+            raise AssertionError(
+                f"process exited while waiting for {needle!r} (status={status}), output so far:\n{buf.decode('utf-8', errors='ignore')}"
+            )
+
+        r, _, _ = select.select([fd], [], [], 0.1)
+        if not r:
+            continue
+        chunk = os.read(fd, 4096)
+        if not chunk:
+            continue
+        buf.extend(chunk)
+        recent.extend(chunk)
+        if len(recent) > 256:
+            del recent[:-256]
+        if b"\x1b[6n" in recent:
+            os.write(fd, b"\x1b[1;1R")
+            recent = recent.replace(b"\x1b[6n", b"")
+
+        text = _strip_ansi(buf.decode("utf-8", errors="ignore"))
+        if needle in text:
+            return text
 
 # 'autocomplete_extension' is a fixture which will skip the test if 'autocomplete' is not loaded
 def test_autocomplete_select(shell, autocomplete_extension):
@@ -16,6 +61,38 @@ def test_autocomplete_select(shell, autocomplete_extension):
     )
     result = test.run()
     result.check_stdout('SELECT')
+
+
+def test_interactive_autocomplete_extra_char(shell, autocomplete_extension, tmp_path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "xterm-256color"
+    env["COLUMNS"] = "80"
+    env["ROWS"] = "24"
+
+    pid, master_fd = pty.fork()
+    if pid == 0:
+        os.execvpe(shell, [shell, "-interactive", "--init", "/dev/null"], env)
+
+    try:
+        _read_until(master_fd, pid, "D ")
+        os.write(master_fd, b".mode csv\r")
+        _read_until(master_fd, pid, "D ")
+        os.write(master_fd, b"SEL")
+        _read_until(master_fd, pid, "SEL")
+        os.write(master_fd, b"\t")
+        _read_until(master_fd, pid, "SELECT")
+        os.write(master_fd, b" 77 as v;\r")
+        out = _read_until(master_fd, pid, "77")
+        assert "SELECT 77 as v;" in out
+        assert "SELECT  77 as v;" not in out
+        os.write(master_fd, b".quit\r")
+    finally:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
 
 def test_autocomplete_first_from(shell, autocomplete_extension):
     test = (

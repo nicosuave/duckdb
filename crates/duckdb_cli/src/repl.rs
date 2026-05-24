@@ -373,8 +373,23 @@ unsafe extern "C" fn linenoise_completion(
             if !candidate.as_bytes().starts_with(bytes) {
                 continue;
             }
-            if let Ok(c) = CString::new(candidate) {
-                unsafe { duckdb_linenoise::linenoiseAddCompletion(lc, c.as_ptr()) };
+            let Ok(c) = CString::new(candidate) else {
+                continue;
+            };
+            let Ok(completion_type) = CString::new("keyword") else {
+                continue;
+            };
+            unsafe {
+                duckdb_linenoise::linenoiseAddCompletion(
+                    lc,
+                    z_line.as_ptr(),
+                    c.as_ptr(),
+                    c.as_bytes().len(),
+                    0,
+                    completion_type.as_ptr(),
+                    0,
+                    0,
+                )
             }
         }
         return;
@@ -443,17 +458,42 @@ unsafe extern "C" fn linenoise_completion(
         if i_start > bytes.len() {
             continue;
         }
-        let mut candidate: Vec<u8> =
-            Vec::with_capacity(bytes.len().saturating_add(completion.len()));
-        candidate.extend_from_slice(&bytes[..i_start]);
-        candidate.extend_from_slice(completion.as_bytes());
-        if candidate.len() >= 1000 {
+        if bytes[..i_start].len().saturating_add(completion.len()) >= 1000 {
             continue;
         }
-        let Ok(candidate_c) = CString::new(candidate) else {
+        let completion_type =
+            unsafe { value_varchar(&mut result, 2, r) }.unwrap_or_else(|| "unknown".to_string());
+        let score = unsafe { value_varchar(&mut result, 3, r) }
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .unwrap_or(0);
+        let extra_char = unsafe { value_varchar(&mut result, 4, r) }
+            .and_then(|v| {
+                let bytes = v.as_bytes();
+                if bytes.len() == 1 {
+                    Some(bytes[0] as c_char)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+        let Ok(completion_c) = CString::new(completion) else {
             continue;
         };
-        unsafe { duckdb_linenoise::linenoiseAddCompletion(lc, candidate_c.as_ptr()) };
+        let Ok(completion_type_c) = CString::new(completion_type) else {
+            continue;
+        };
+        unsafe {
+            duckdb_linenoise::linenoiseAddCompletion(
+                lc,
+                z_line.as_ptr(),
+                completion_c.as_ptr(),
+                completion_c.as_bytes().len(),
+                i_start,
+                completion_type_c.as_ptr(),
+                score,
+                extra_char,
+            )
+        };
     }
 
     unsafe { duckdb_sys::duckdb_destroy_result(&mut result) };
@@ -469,7 +509,20 @@ pub fn ensure_linenoise_installed(state: &mut ShellState) {
         CString::new(state.continuePrompt.as_str()),
         CString::new(state.continuePromptSelected.as_str()),
     ) {
-        unsafe { duckdb_linenoise::linenoiseSetPrompt(cont.as_ptr(), cont_sel.as_ptr()) };
+        let Ok(scroll_up) = CString::new("⇡ ") else {
+            return;
+        };
+        let Ok(scroll_down) = CString::new("⇣ ") else {
+            return;
+        };
+        unsafe {
+            duckdb_linenoise::linenoiseSetPrompt(
+                cont.as_ptr(),
+                cont_sel.as_ptr(),
+                scroll_up.as_ptr(),
+                scroll_down.as_ptr(),
+            )
+        };
     }
 
     if LINENOISE_INSTALLED.swap(true, Ordering::SeqCst) {
@@ -513,7 +566,7 @@ pub fn process_stdin_interactive(state: &mut ShellState, session: &mut Session) 
             let prompt = if is_continuation {
                 state.continuePrompt.clone()
             } else {
-                state.mainPrompt.clone()
+                crate::prompt::render_main_prompt(state, session.con)
             };
             let Ok(prompt_c) = CString::new(prompt) else {
                 break;
@@ -532,11 +585,11 @@ pub fn process_stdin_interactive(state: &mut ShellState, session: &mut Session) 
             Some(s)
         } else {
             let prompt = if is_continuation {
-                state.continuePrompt.as_str()
+                state.continuePrompt.clone()
             } else {
-                state.mainPrompt.as_str()
+                crate::prompt::render_main_prompt(state, session.con)
             };
-            print_stdout(prompt);
+            print_stdout(&prompt);
             let _ = std::io::stdout().flush();
             let mut buf = String::new();
             match stdin_lock.read_line(&mut buf) {
@@ -605,7 +658,8 @@ pub fn process_stdin_interactive(state: &mut ShellState, session: &mut Session) 
                     if line_contains_semicolon(edited.as_bytes()) && sql_is_complete(&edited) {
                         if state.rl_version == ReadLineVersion::Linenoise {
                             if let Ok(c) = CString::new(edited.as_str()) {
-                                let _ = unsafe { duckdb_linenoise::linenoiseHistoryAdd(c.as_ptr()) };
+                                let _ =
+                                    unsafe { duckdb_linenoise::linenoiseHistoryAdd(c.as_ptr()) };
                             }
                         }
                         let executed_sql = edited.trim_end_matches('\n').to_string();
@@ -773,7 +827,7 @@ pub fn process_reader<R: BufRead>(
 
         if interactive {
             if sql_buf.is_empty() {
-                print_stdout("D ");
+                print_stdout(&crate::prompt::render_main_prompt(state, session.con));
             } else {
                 print_stdout("· ");
             }
@@ -836,7 +890,8 @@ pub fn process_reader<R: BufRead>(
         ctrl_c_count = 0;
 
         if mode == InputMode::DuckDbRc && !line.starts_with(".startup_text") {
-            if state.startup_text == StartupText::All && !state.displayed_loading_resources_message {
+            if state.startup_text == StartupText::All && !state.displayed_loading_resources_message
+            {
                 if let Some(path) = state.duckdb_rc_path.as_deref() {
                     print_stderr(&format!("-- Loading resources from {}\n", path));
                     state.displayed_loading_resources_message = true;
@@ -953,140 +1008,6 @@ pub fn run_interactive_banner(state: &ShellState, con: duckdb_sys::duckdb_connec
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum PromptParseState {
-    Standard,
-    ParseBracketType,
-    ParseBracketContent,
-    Escaped,
-}
-
-fn is_color_name_supported(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "black"
-            | "red"
-            | "green"
-            | "yellow"
-            | "blue"
-            | "magenta"
-            | "cyan"
-            | "white"
-            | "brightblack"
-            | "brightgray"
-            | "gray"
-            | "brightred"
-            | "brightgreen"
-            | "brightyellow"
-            | "brightblue"
-            | "brightmagenta"
-            | "brightcyan"
-            | "brightwhite"
-    )
-}
-
-fn validate_prompt_component(bracket_type: &str, value: &str) -> Result<(), String> {
-    match bracket_type {
-        "setting" => {
-            if value.is_empty() {
-                return Err("setting requires a parameter".to_string());
-            }
-            Ok(())
-        }
-        "sql" => {
-            if value.is_empty() {
-                return Err("sql requires a parameter".to_string());
-            }
-            Ok(())
-        }
-        "color" => {
-            if value.is_empty() {
-                return Err("color requires a parameter".to_string());
-            }
-            if matches!(value, "bold" | "underline" | "reset") {
-                return Ok(());
-            }
-            if !is_color_name_supported(value) {
-                return Err(format!("Unknown highlighting color '{}'", value));
-            }
-            Ok(())
-        }
-        "highlight_element" => {
-            if value.is_empty() {
-                return Err("highlight_element requires a parameter".to_string());
-            }
-            Ok(())
-        }
-        "max_length" => {
-            if value.is_empty() {
-                return Err("max_length requires a parameter".to_string());
-            }
-            Ok(())
-        }
-        other => Err(format!("Unknown bracket type {}", other)),
-    }
-}
-
 pub fn validate_prompt_spec(prompt: &str) -> Result<(), String> {
-    let mut parse_state = PromptParseState::Standard;
-    let mut prev_state = parse_state;
-    let mut bracket_type = String::new();
-    let mut literal = String::new();
-
-    for c in prompt.chars() {
-        match parse_state {
-            PromptParseState::Standard => match c {
-                '\\' => {
-                    prev_state = parse_state;
-                    parse_state = PromptParseState::Escaped;
-                }
-                '{' => {
-                    literal.clear();
-                    parse_state = PromptParseState::ParseBracketType;
-                }
-                _ => literal.push(c),
-            },
-            PromptParseState::Escaped => {
-                literal.push(c);
-                parse_state = prev_state;
-            }
-            PromptParseState::ParseBracketType => match c {
-                '}' => {
-                    validate_prompt_component(&literal, "")?;
-                    literal.clear();
-                    parse_state = PromptParseState::Standard;
-                }
-                ':' => {
-                    bracket_type = std::mem::take(&mut literal);
-                    parse_state = PromptParseState::ParseBracketContent;
-                }
-                '\\' => {
-                    prev_state = parse_state;
-                    parse_state = PromptParseState::Escaped;
-                }
-                _ => literal.push(c),
-            },
-            PromptParseState::ParseBracketContent => match c {
-                '}' => {
-                    validate_prompt_component(&bracket_type, &literal)?;
-                    bracket_type.clear();
-                    literal.clear();
-                    parse_state = PromptParseState::Standard;
-                }
-                '\\' => {
-                    prev_state = parse_state;
-                    parse_state = PromptParseState::Escaped;
-                }
-                _ => literal.push(c),
-            },
-        }
-    }
-
-    if parse_state != PromptParseState::Standard {
-        return Err(format!(
-            "Failed to parse prompt \"{}\" - unterminated bracket or escape",
-            prompt
-        ));
-    }
-    Ok(())
+    crate::prompt::validate_prompt_spec(prompt)
 }

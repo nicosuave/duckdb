@@ -2,11 +2,7 @@
 
 use std::os::raw::{c_char, c_int, c_void};
 
-#[repr(C)]
-pub struct linenoiseCompletions {
-    pub len: usize,
-    pub cvec: *mut *mut c_char,
-}
+pub type linenoiseCompletions = *mut c_void;
 
 pub type linenoiseCompletionCallback =
     unsafe extern "C" fn(*const c_char, *mut linenoiseCompletions);
@@ -15,22 +11,30 @@ extern "C" {
     pub fn linenoise(prompt: *const c_char) -> *mut c_char;
     pub fn linenoiseFree(ptr: *mut c_void);
 
-    pub fn linenoiseParseOption(
-        azArg: *const *const c_char,
-        nArg: c_int,
-        out_error: *mut *const c_char,
-    ) -> c_int;
-
     pub fn linenoiseHistoryAdd(line: *const c_char) -> c_int;
     pub fn linenoiseHistorySetMaxLen(len: c_int) -> c_int;
     pub fn linenoiseHistorySave(filename: *const c_char) -> c_int;
     pub fn linenoiseHistoryLoad(filename: *const c_char) -> c_int;
 
     pub fn linenoiseSetCompletionCallback(cb: Option<linenoiseCompletionCallback>);
-    pub fn linenoiseAddCompletion(lc: *mut linenoiseCompletions, completion: *const c_char);
+    pub fn linenoiseAddCompletion(
+        lc: *mut linenoiseCompletions,
+        line: *const c_char,
+        completion: *const c_char,
+        n_completion: usize,
+        completion_start: usize,
+        completion_type: *const c_char,
+        score: usize,
+        extra_char: c_char,
+    );
 
     pub fn linenoiseSetMultiLine(ml: c_int);
-    pub fn linenoiseSetPrompt(continuation: *const c_char, continuation_selected: *const c_char);
+    pub fn linenoiseSetPrompt(
+        continuation: *const c_char,
+        continuation_selected: *const c_char,
+        scroll_up: *const c_char,
+        scroll_down: *const c_char,
+    );
 
     pub fn linenoiseSetCompletionRendering(enabled: c_int);
     pub fn linenoiseSetErrorRendering(enabled: c_int);

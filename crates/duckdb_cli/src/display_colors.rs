@@ -104,9 +104,13 @@ pub fn render_display_colors(intensity: PrintIntensity, use_ansi: bool) -> Strin
         }
         let a_lum = lum(*a);
         let b_lum = lum(*b);
-        a_lum
+        let lum_order = a_lum
             .partial_cmp(&b_lum)
-            .unwrap_or(std::cmp::Ordering::Equal)
+            .unwrap_or(std::cmp::Ordering::Equal);
+        if lum_order != std::cmp::Ordering::Equal {
+            return lum_order;
+        }
+        b.code.cmp(&a.code)
     });
 
     let mut out = String::new();
@@ -137,7 +141,10 @@ pub fn try_get_highlight_color_code(name: &str) -> Result<u8, String> {
     }
 
     let mut error_msg = format!("Unknown highlighting color '{}'\n", name);
-    let color_names: Vec<String> = HIGHLIGHT_COLOR_INFO.iter().map(|c| c.name.to_string()).collect();
+    let color_names: Vec<String> = HIGHLIGHT_COLOR_INFO
+        .iter()
+        .map(|c| c.name.to_string())
+        .collect();
     error_msg.push_str(&crate::candidates::candidates_error_message(
         &color_names,
         name,

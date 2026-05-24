@@ -1,5 +1,7 @@
 use crate::candidates;
-use crate::state::{BailOnError, InitialAction, MetadataResult, RenderMode, ShellFlags, ShellState};
+use crate::state::{
+    BailOnError, InitialAction, MetadataResult, RenderMode, ShellFlags, ShellState,
+};
 
 pub struct CommandLineOption {
     pub option: &'static str,
@@ -164,6 +166,32 @@ fn launch_ui(state: &mut ShellState, _args: &[String]) -> MetadataResult {
 
 fn toggle_mode(state: &mut ShellState, mode: RenderMode) -> MetadataResult {
     toggle_output_mode(state, mode)
+}
+
+const VALID_STORAGE_VERSIONS: &[&str] = &[
+    "v0.10.0", "v0.10.1", "v0.10.2", "v0.10.3", "v1.0.0", "v1.1.0", "v1.1.1", "v1.1.2", "v1.1.3",
+    "v1.2.0", "v1.2.1", "v1.2.2", "v1.3.0", "v1.3.1", "v1.3.2", "v1.4.0", "v1.4.1", "v1.4.2",
+    "v1.4.3", "v1.4.4", "v1.5.0", "v1.5.1", "v1.5.2", "v1.5.3", "latest",
+];
+
+fn set_storage_version(state: &mut ShellState, args: &[String]) -> MetadataResult {
+    let version = &args[1];
+    if !VALID_STORAGE_VERSIONS.contains(&version.as_str()) {
+        eprintln!(
+            "{}: Error: unknown argument ({}) for '-storage-version': Invalid Input Error: The version string '{}' is not a known DuckDB version, valid options are: {}",
+            state.program_name,
+            version,
+            version,
+            VALID_STORAGE_VERSIONS.join(", ")
+        );
+        return MetadataResult::Exit;
+    }
+
+    state
+        .config_kv
+        .push(("storage_compatibility_version".to_string(), version.clone()));
+    state.storage_version = Some(version.clone());
+    MetadataResult::Success
 }
 
 pub static COMMAND_LINE_OPTIONS: &[CommandLineOption] = &[
@@ -419,13 +447,7 @@ pub static COMMAND_LINE_OPTIONS: &[CommandLineOption] = &[
         option: "storage-version",
         argument_count: 1,
         arguments: "VER",
-        pre_init_callback: Some(|state, args| {
-            state
-                .config_kv
-                .push(("storage_compatibility_version".to_string(), args[1].clone()));
-            state.storage_version = Some(args[1].clone());
-            MetadataResult::Success
-        }),
+        pre_init_callback: Some(set_storage_version),
         post_init_callback: None,
         description: "database storage compatibility version to use. Default: 'v0.10.0'",
     },

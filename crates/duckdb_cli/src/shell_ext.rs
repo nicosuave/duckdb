@@ -1,13 +1,18 @@
+use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::os::raw::c_char;
 use std::os::raw::c_void;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 static EXTERNAL_ACCESS_ENABLED: AtomicBool = AtomicBool::new(true);
 static LAST_RESULT_AVAILABLE: AtomicBool = AtomicBool::new(false);
 static SUPPRESS_LOG_OUTPUT: AtomicBool = AtomicBool::new(false);
+static PRINTED_LOGS: OnceLock<Mutex<HashSet<u64>>> = OnceLock::new();
 
 pub fn set_last_result_available(value: bool) {
     LAST_RESULT_AVAILABLE.store(value, Ordering::Relaxed);
@@ -32,11 +37,34 @@ unsafe extern "C" fn shell_log_storage_write_log_entry(
     }
     let level = unsafe { CStr::from_ptr(level) }.to_string_lossy();
     let message = unsafe { CStr::from_ptr(log_message) }.to_string_lossy();
+    let mut hasher = DefaultHasher::new();
+    message.to_ascii_lowercase().hash(&mut hasher);
+    let log_id = hasher.finish();
+    let printed_logs = PRINTED_LOGS.get_or_init(|| Mutex::new(HashSet::new()));
+    if let Ok(mut printed_logs) = printed_logs.lock() {
+        if !printed_logs.insert(log_id) {
+            return;
+        }
+    }
 
     let mut stdout = std::io::stdout().lock();
+    let style = match level.to_ascii_lowercase().as_str() {
+        "trace" => "\x1b[1m\x1b[34m",
+        "debug" => "\x1b[1m\x1b[33m",
+        "info" => "\x1b[1m\x1b[32m",
+        "warning" => "\x1b[90m",
+        "error" | "fatal" => "\x1b[31m",
+        _ => "",
+    };
+    if !style.is_empty() {
+        let _ = stdout.write_all(style.as_bytes());
+    }
     let _ = stdout.write_all(level.to_ascii_uppercase().as_bytes());
     let _ = stdout.write_all(b":\n");
     let _ = stdout.write_all(message.as_bytes());
+    if !style.is_empty() {
+        let _ = stdout.write_all(b"\x1b[00m");
+    }
     let _ = stdout.write_all(b"\n\n");
     let _ = stdout.flush();
 }
@@ -55,7 +83,11 @@ unsafe fn dlsym_optional(symbol: &str) -> Option<*mut c_void> {
         return None;
     };
     let ptr = unsafe { dlsym(handle, symbol.as_ptr()) };
-    if ptr.is_null() { None } else { Some(ptr) }
+    if ptr.is_null() {
+        None
+    } else {
+        Some(ptr)
+    }
 }
 
 pub fn sync_external_access(con: duckdb_sys::duckdb_connection) {
@@ -221,10 +253,8 @@ pub fn register(
             extra_data: *mut c_void,
             delete_callback: duckdb_sys::duckdb_delete_callback_t,
         );
-        type DuckdbLogStorageSetName = unsafe extern "C" fn(
-            log_storage: duckdb_sys::duckdb_log_storage,
-            name: *const c_char,
-        );
+        type DuckdbLogStorageSetName =
+            unsafe extern "C" fn(log_storage: duckdb_sys::duckdb_log_storage, name: *const c_char);
         type DuckdbRegisterLogStorage = unsafe extern "C" fn(
             database: duckdb_sys::duckdb_database,
             log_storage: duckdb_sys::duckdb_log_storage,

@@ -317,6 +317,13 @@ def test_interactive_reverse_search(shell, tmp_path):
         write_bytes(b"\x07")
         read_until("D ")
 
+        write_bytes(b"123\x12")
+        seeded = read_until("1/1> ")
+        assert "select 123 as v;" in strip_ansi(seeded)
+
+        write_bytes(b"\x07")
+        read_until("D ")
+
         write_bytes(b".quit\r")
         deadline = time.time() + 10.0
         while time.time() < deadline:

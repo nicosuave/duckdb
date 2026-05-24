@@ -11,6 +11,7 @@ def test_pager_status_default(shell):
     )
     result = test.run()
     result.check_stdout('Pager mode: automatic')
+    result.check_stdout('Trigger pager when rows exceed 50 or result set is wider than terminalPager command:')
 
 
 def test_pager_help(shell):
@@ -32,6 +33,17 @@ def test_pager_off_explicit(shell):
     )
     result = test.run()
     result.check_stdout('Pager mode: off')
+    result.check_stdout('Pager command:')
+
+
+def test_pager_column_threshold_rejected(shell):
+    test = (
+        ShellTest(shell)
+            .statement('.pager set_column_threshold 1')
+    )
+    result = test.run()
+    assert result.status_code == 1
+    result.check_stderr("Invalid usage of command '.pager'")
 
 def test_pager_on_with_pager_env(shell):
     """Test that pager uses PAGER environment variable"""

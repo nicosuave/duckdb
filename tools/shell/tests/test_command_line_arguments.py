@@ -84,7 +84,10 @@ def test_storage_version_error(shell):
         .add_argument("-storage-version", "XXX")
     )
     result = test.run()
+    assert result.status_code == 0
+    result.check_stderr("unknown argument (XXX) for '-storage-version'")
     result.check_stderr("XXX")
+    result.check_stderr("v1.5.3, latest")
 
 
 # fmt: on

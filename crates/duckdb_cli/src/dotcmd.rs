@@ -85,7 +85,7 @@ pub const METADATA_COMMANDS: &[DotCommandSpec] = &[
         command: "bail",
         argument_count: 2,
         match_size: 3,
-        usage: "auto|on|off",
+        usage: "on|off",
         id: DotCommandId::Bail,
     },
     DotCommandSpec {
@@ -246,7 +246,7 @@ pub const METADATA_COMMANDS: &[DotCommandSpec] = &[
         command: "highlight_mode",
         argument_count: 2,
         match_size: 0,
-        usage: "mixed|dark|light|auto",
+        usage: "mixed|dark|light",
         id: DotCommandId::HighlightMode,
     },
     DotCommandSpec {
@@ -636,7 +636,7 @@ pub fn should_show_in_help(id: DotCommandId) -> bool {
 
 pub fn help_summary(id: DotCommandId) -> &'static str {
     match id {
-		DotCommandId::Bail => "Stop after hitting an error.  Default AUTO",
+		DotCommandId::Bail => "Stop after hitting an error.  Default OFF",
 		DotCommandId::Binary => "Turn binary output on or off.  Default OFF",
 		DotCommandId::Cd => "Change the working directory to DIRECTORY",
 		DotCommandId::Changes => "Show number of rows changed by SQL",
@@ -687,7 +687,7 @@ pub fn help_summary(id: DotCommandId) -> &'static str {
 		DotCommandId::RenderCompletion => "Toggle displaying of completion prompts in the shell on/off",
 		DotCommandId::RenderErrors => "Toggle rendering of errors in the shell on/off",
 		DotCommandId::Rows => "Row-wise rendering of query results (default)",
-		DotCommandId::SafeMode => "enable safe-mode",
+		DotCommandId::SafeMode => "Enable safe-mode",
 		DotCommandId::Schema => "Show the CREATE statements matching PATTERN",
 		DotCommandId::Separator => "Change the column and row separators",
 		DotCommandId::Shell => "Run CMD ARGS... in a system shell",

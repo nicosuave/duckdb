@@ -1,4 +1,3 @@
-
 use crate::output::OutputHandle;
 use crate::session::Session;
 use crate::state::{
@@ -21,7 +20,10 @@ fn looks_like_json_literal_for_shell_display(inner: &str) -> bool {
     (t.starts_with('{') && t.ends_with('}')) || (t.starts_with('[') && t.ends_with(']'))
 }
 
-fn shell_should_unquote_string_literal_in_complex(inner: &str, unquote_json_literals: bool) -> bool {
+fn shell_should_unquote_string_literal_in_complex(
+    inner: &str,
+    unquote_json_literals: bool,
+) -> bool {
     // DuckDB's shipped shell unquotes string literals inside nested/list/struct displays quite
     // aggressively (even with whitespace and numeric/boolean-looking values). It keeps quotes
     // for cases that would otherwise be visually confusing, and for the special-case "null"
@@ -281,7 +283,9 @@ fn normalize_complex_value_for_shell_display(
                     let inner_raw = &value[pos + 1..end_quote];
                     let inner_decoded = decode_nested_string_inner_for_key(inner_raw);
                     out.push('\'');
-                    out.push_str(&escape_single_quotes_for_shell_nested_string(&inner_decoded));
+                    out.push_str(&escape_single_quotes_for_shell_nested_string(
+                        &inner_decoded,
+                    ));
                     out.push('\'');
 
                     // Advance the iterator to consume up to and including the closing quote.
@@ -507,6 +511,7 @@ fn get_system_pager() -> String {
 
 fn page_or_print_stdout(state: &mut ShellState, bytes: &[u8]) {
     if !state.stdout_is_console
+        || !state.stdin_is_interactive
         || !state.outfile.is_empty()
         || !matches!(&state.out, OutputHandle::Stdout)
     {
@@ -568,6 +573,7 @@ fn page_or_print_stdout(state: &mut ShellState, bytes: &[u8]) {
 
 fn page_or_print_stdout_rows_only(state: &mut ShellState, bytes: &[u8]) {
     if !state.stdout_is_console
+        || !state.stdin_is_interactive
         || !state.outfile.is_empty()
         || !matches!(&state.out, OutputHandle::Stdout)
     {
@@ -1050,37 +1056,12 @@ fn try_parse_set_timezone_statement(stmt: &str) -> Option<String> {
 }
 
 fn try_run_linenoise_parse_option(args: &[String]) -> Result<bool, String> {
-    use std::ffi::CString;
-    use std::os::raw::c_char;
-
-    let mut cstrings: Vec<CString> = Vec::with_capacity(args.len());
     for s in args {
-        let c = CString::new(s.as_str())
-            .map_err(|_| "Invalid argument (contains null byte)".to_string())?;
-        cstrings.push(c);
-    }
-    let mut ptrs: Vec<*const c_char> = cstrings.iter().map(|s| s.as_ptr()).collect();
-
-    let mut err_ptr: *const c_char = std::ptr::null();
-    let rc = unsafe {
-        duckdb_linenoise::linenoiseParseOption(
-            ptrs.as_mut_ptr(),
-            ptrs.len() as i32,
-            &mut err_ptr as *mut *const c_char,
-        )
-    };
-    if rc == 0 {
-        return Ok(false);
-    }
-    if !err_ptr.is_null() {
-        let msg = unsafe { std::ffi::CStr::from_ptr(err_ptr) }
-            .to_string_lossy()
-            .to_string();
-        if !msg.is_empty() {
-            return Err(msg);
+        if s.as_bytes().contains(&0) {
+            return Err("Invalid argument (contains null byte)".to_string());
         }
     }
-    Ok(true)
+    Ok(false)
 }
 
 fn render_length(s: &str) -> usize {
@@ -1557,9 +1538,97 @@ fn show_help(state: &mut ShellState, pattern: Option<&str>) -> usize {
     if !print_extended {
         print_stdout_line(state, "");
         print_stdout_line(state, "Run .help --all for extended information");
+        print_stdout_line(state, "Run .help shortcuts for keyboard shortcuts");
     }
 
     print_info_list.len()
+}
+
+fn print_shortcut_heading(state: &mut ShellState, heading: &str) {
+    if state.highlighting_enabled {
+        print_stdout(state, "\x1b[32m");
+    }
+    print_stdout(state, heading);
+    if state.highlighting_enabled {
+        print_stdout(state, "\x1b[00m");
+    }
+    print_stdout(state, "\n");
+}
+
+fn show_shortcuts_help(state: &mut ShellState) {
+    const SECTIONS: &[(&str, &[(&str, &str)])] = &[
+        (
+            "Control",
+            &[
+                ("Enter / Ctrl+J", "Submit input"),
+                (
+                    "Ctrl+C",
+                    "Cancel current input or interrupt in-flight query",
+                ),
+                ("Ctrl+D", "Exit shell (when line is empty)"),
+                ("Ctrl+G", "Submit input (in multiline mode)"),
+                ("Ctrl+L", "Clear screen"),
+                ("Ctrl+Z", "Suspend shell"),
+                ("Tab", "Auto-complete"),
+                ("Ctrl+Q, then click", "Move cursor to mouse click position"),
+            ],
+        ),
+        (
+            "Editing",
+            &[
+                (
+                    "Ctrl+D / Delete",
+                    "Delete character under cursor (or exit if line is empty)",
+                ),
+                ("Ctrl+H / Backspace", "Delete character before cursor"),
+                ("Ctrl+K", "Delete from cursor to end of line"),
+                ("Ctrl+U", "Delete entire line"),
+                ("Ctrl+W", "Delete previous word"),
+                ("Alt+D", "Delete next word"),
+                ("Alt+Backspace", "Delete previous word"),
+                ("Ctrl+T", "Swap character under cursor with previous"),
+                ("Alt+T", "Swap current word with previous"),
+                ("Alt+C", "Capitalize next word"),
+                ("Alt+L", "Lowercase next word"),
+                ("Alt+U", "Uppercase next word"),
+                ("Alt+R", "Delete entire line"),
+                ("Alt+\\", "Remove spaces around cursor"),
+                ("Ctrl+X", "Insert newline (multiline input)"),
+            ],
+        ),
+        (
+            "Navigation",
+            &[
+                ("Ctrl+A / Home", "Go to beginning of line"),
+                ("Ctrl+E / End", "Go to end of line"),
+                ("Ctrl+B / Left", "Move cursor left"),
+                ("Ctrl+F / Right", "Move cursor right"),
+                ("Alt+B / Alt+Left", "Move cursor one word left"),
+                ("Alt+F / Alt+Right", "Move cursor one word right"),
+            ],
+        ),
+        (
+            "History",
+            &[
+                ("Ctrl+P / Up", "Previous history entry"),
+                ("Ctrl+N / Down", "Next history entry"),
+                ("Ctrl+R", "Reverse search history"),
+                ("Ctrl+S", "Forward search history"),
+                ("Ctrl+Up", "Jump to first history entry"),
+                ("Ctrl+Down", "Jump to last history entry"),
+            ],
+        ),
+    ];
+
+    for (section_idx, (heading, rows)) in SECTIONS.iter().enumerate() {
+        if section_idx > 0 {
+            print_stdout(state, "\n");
+        }
+        print_shortcut_heading(state, heading);
+        for (shortcut, description) in *rows {
+            print_stdout_line(state, &format!("  {:<23}{}", shortcut, description));
+        }
+    }
 }
 
 fn set_output_file(state: &mut ShellState, args: &[String], output_mode: char) -> i32 {
@@ -1977,7 +2046,8 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
             let mut columns: Vec<TableMetadataColumn> = Vec::with_capacity(row_count);
             for row in 0..row_count {
                 let mut get_str = |col: u64| -> Option<String> {
-                    let ptr = unsafe { duckdb_sys::duckdb_value_varchar(&mut result, col, row as u64) };
+                    let ptr =
+                        unsafe { duckdb_sys::duckdb_value_varchar(&mut result, col, row as u64) };
                     if ptr.is_null() {
                         return None;
                     }
@@ -2020,9 +2090,13 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
         }
         crate::dotcmd::DotCommandId::Help => {
             if let Some(pat) = args.get(1).map(|s| s.as_str()) {
-                let n = show_help(state, Some(pat));
-                if n == 0 {
-                    print_stdout_line(state, &format!("Nothing matches '{}'", pat));
+                if pat == "shortcuts" {
+                    show_shortcuts_help(state);
+                } else {
+                    let n = show_help(state, Some(pat));
+                    if n == 0 {
+                        print_stdout_line(state, &format!("Nothing matches '{}'", pat));
+                    }
                 }
             } else {
                 let _ = show_help(state, None);
@@ -2052,7 +2126,8 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                 (false, true) => PrintIntensity::Underline,
                 (true, true) => PrintIntensity::BoldUnderline,
             };
-            let out = crate::display_colors::render_display_colors(intensity, state.highlighting_enabled);
+            let out =
+                crate::display_colors::render_display_colors(intensity, state.highlighting_enabled);
             print_stdout(state, &out);
             0
         }
@@ -2136,14 +2211,12 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                     print_stdout(
                         state,
                         &format!(
-							"Trigger pager when rows exceed {} or result set is wider than terminal\n",
+							"Trigger pager when rows exceed {} or result set is wider than terminal",
 							state.pager_min_rows
 						),
                     );
                 }
-                if state.pager_mode != PagerMode::Off || !state.pager_command.is_empty() {
-                    print_stdout(state, &format!("Pager command: {}\n", state.pager_command));
-                }
+                print_stdout(state, &format!("Pager command: {}\n", state.pager_command));
                 return 0;
             }
             if args[1] == "set_row_threshold" {
@@ -2158,20 +2231,12 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                 state.pager_min_rows = v;
                 return 0;
             }
-            if args[1] == "set_column_threshold" {
-                if args.len() != 3 {
-                    print_database_error("Usage: .pager set_column_threshold THRESHOLD");
-                    return 1;
-                }
-                let Ok(v) = args[2].parse::<u64>() else {
-                    print_database_error("Invalid threshold");
-                    return 1;
-                };
-                state.pager_min_cols = v;
-                return 0;
-            }
             if args.len() != 2 {
-                print_database_error("Usage: .pager [on|off|automatic]|[pager_command]");
+                let error = format!(
+                    "Invalid Command Error: Invalid usage of command '.{}'\n\nUsage: '.{} {}'",
+                    name, spec.command, spec.usage
+                );
+                print_database_error(&error);
                 return 1;
             }
             match args[1].as_str() {
@@ -2417,7 +2482,9 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                 Some(v) if v.eq_ignore_ascii_case("standard") => PrintIntensity::Standard,
                 Some(v) if v.eq_ignore_ascii_case("bold") => PrintIntensity::Bold,
                 Some(v) if v.eq_ignore_ascii_case("underline") => PrintIntensity::Underline,
-                Some(v) if v.eq_ignore_ascii_case("bold_underline") => PrintIntensity::BoldUnderline,
+                Some(v) if v.eq_ignore_ascii_case("bold_underline") => {
+                    PrintIntensity::BoldUnderline
+                }
                 Some(other) => {
                     print_database_error(&format!(
                         "Unknown intensity '{}', supported options: standard, bold, underline\n",
@@ -2435,18 +2502,6 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
         crate::dotcmd::DotCommandId::Prompt => {
             if args.len() >= 2 {
                 if let Err(e) = crate::repl::validate_prompt_spec(args[1].as_str()) {
-                    print_database_error(&e);
-                    return 1;
-                }
-            }
-            if args.len() >= 3 {
-                if let Err(e) = crate::repl::validate_prompt_spec(args[2].as_str()) {
-                    print_database_error(&e);
-                    return 1;
-                }
-            }
-            if args.len() >= 4 {
-                if let Err(e) = crate::repl::validate_prompt_spec(args[3].as_str()) {
                     print_database_error(&e);
                     return 1;
                 }
@@ -2480,7 +2535,9 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
         crate::dotcmd::DotCommandId::Once => set_output_file(state, &args, 'o'),
         crate::dotcmd::DotCommandId::Excel => set_output_file(state, &args, 'e'),
         crate::dotcmd::DotCommandId::Edit => {
-            print_database_error("Command \"edit\" is unsupported in the current version of the CLI\n");
+            print_database_error(
+                "Command \"edit\" is unsupported in the current version of the CLI\n",
+            );
             1
         }
         crate::dotcmd::DotCommandId::UiCommand => {
@@ -2522,6 +2579,10 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                         name, spec.command, spec.usage
                     );
                     print_database_error(&error);
+                    return 1;
+                }
+                if let Err(e) = crate::prompt::validate_progress_bar_spec(args[2].as_str()) {
+                    print_database_error(&e);
                     return 1;
                 }
                 state.progress_bar_components.push(args[2].clone());
@@ -2967,7 +3028,7 @@ ORDER BY columns.database_name, columns.schema_name, columns.table_name, columns
                         if idx + 1 < parts.len() {
                             out.push(',');
                         }
-                    out.push('\n');
+                        out.push('\n');
                     }
                     out.push_str(");;\n");
                     return out;
@@ -3311,16 +3372,12 @@ ORDER BY columns.database_name, columns.schema_name, columns.table_name, columns
                 }
             }
 
-            let sql_string_literal = |raw: &str| -> String {
-                format!("'{}'", sql_escape_single_quotes(raw))
-            };
+            let sql_string_literal =
+                |raw: &str| -> String { format!("'{}'", sql_escape_single_quotes(raw)) };
 
             let mut like_expr = String::new();
             for pat in patterns.iter().copied() {
-                let clause = format!(
-                    "name LIKE {} ESCAPE '\\'",
-                    sql_string_literal(pat)
-                );
+                let clause = format!("name LIKE {} ESCAPE '\\'", sql_string_literal(pat));
                 if like_expr.is_empty() {
                     like_expr.push_str(&clause);
                 } else {
@@ -3387,73 +3444,73 @@ ORDER BY table_schema",
                 had_error = true;
             }
 
-            let get_table_schema = |con: duckdb_sys::duckdb_connection,
-                                    table_name: &str|
-             -> Option<String> {
-                let q = format!(
-                    "SELECT table_schema FROM information_schema.tables \
+            let get_table_schema =
+                |con: duckdb_sys::duckdb_connection, table_name: &str| -> Option<String> {
+                    let q = format!(
+                        "SELECT table_schema FROM information_schema.tables \
 WHERE table_name = {} AND table_type='BASE TABLE' \
 ORDER BY (table_schema='main') DESC LIMIT 1",
-                    sql_string_literal(table_name)
-                );
-                let Ok(c_q) = CString::new(q) else {
-                    return None;
-                };
-                let mut res: duckdb_sys::duckdb_result = unsafe { std::mem::zeroed() };
-                let rc = unsafe { duckdb_sys::duckdb_query(con, c_q.as_ptr(), &mut res) };
-                if rc != duckdb_sys::DuckDBSuccess {
-                    unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
-                    return None;
-                }
-                let rows = unsafe { duckdb_sys::duckdb_row_count(&mut res) } as usize;
-                if rows == 0 {
-                    unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
-                    return None;
-                }
-                let schema_ptr = unsafe { duckdb_sys::duckdb_value_varchar(&mut res, 0, 0) };
-                if schema_ptr.is_null() {
-                    unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
-                    return None;
-                }
-                let schema = unsafe { CStr::from_ptr(schema_ptr) }
-                    .to_string_lossy()
-                    .to_string();
-                unsafe {
-                    duckdb_sys::duckdb_free(schema_ptr as *mut _);
-                    duckdb_sys::duckdb_destroy_result(&mut res);
-                }
-                Some(schema)
-            };
-
-            let table_column_list = |con: duckdb_sys::duckdb_connection,
-                                     qualified_name: &str|
-             -> Vec<String> {
-                let pragma_sql = format!("PRAGMA table_info={}", sql_string_literal(qualified_name));
-                let Ok(c_q) = CString::new(pragma_sql) else {
-                    return Vec::new();
-                };
-                let mut res: duckdb_sys::duckdb_result = unsafe { std::mem::zeroed() };
-                let rc = unsafe { duckdb_sys::duckdb_query(con, c_q.as_ptr(), &mut res) };
-                if rc != duckdb_sys::DuckDBSuccess {
-                    unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
-                    return Vec::new();
-                }
-                let rows = unsafe { duckdb_sys::duckdb_row_count(&mut res) } as usize;
-                let mut out: Vec<String> = Vec::with_capacity(rows);
-                for r in 0..rows {
-                    let name_ptr = unsafe { duckdb_sys::duckdb_value_varchar(&mut res, 1, r as u64) };
-                    if name_ptr.is_null() {
-                        continue;
+                        sql_string_literal(table_name)
+                    );
+                    let Ok(c_q) = CString::new(q) else {
+                        return None;
+                    };
+                    let mut res: duckdb_sys::duckdb_result = unsafe { std::mem::zeroed() };
+                    let rc = unsafe { duckdb_sys::duckdb_query(con, c_q.as_ptr(), &mut res) };
+                    if rc != duckdb_sys::DuckDBSuccess {
+                        unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
+                        return None;
                     }
-                    let name = unsafe { CStr::from_ptr(name_ptr) }
+                    let rows = unsafe { duckdb_sys::duckdb_row_count(&mut res) } as usize;
+                    if rows == 0 {
+                        unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
+                        return None;
+                    }
+                    let schema_ptr = unsafe { duckdb_sys::duckdb_value_varchar(&mut res, 0, 0) };
+                    if schema_ptr.is_null() {
+                        unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
+                        return None;
+                    }
+                    let schema = unsafe { CStr::from_ptr(schema_ptr) }
                         .to_string_lossy()
                         .to_string();
-                    unsafe { duckdb_sys::duckdb_free(name_ptr as *mut _) };
-                    out.push(name);
-                }
-                unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
-                out
-            };
+                    unsafe {
+                        duckdb_sys::duckdb_free(schema_ptr as *mut _);
+                        duckdb_sys::duckdb_destroy_result(&mut res);
+                    }
+                    Some(schema)
+                };
+
+            let table_column_list =
+                |con: duckdb_sys::duckdb_connection, qualified_name: &str| -> Vec<String> {
+                    let pragma_sql =
+                        format!("PRAGMA table_info={}", sql_string_literal(qualified_name));
+                    let Ok(c_q) = CString::new(pragma_sql) else {
+                        return Vec::new();
+                    };
+                    let mut res: duckdb_sys::duckdb_result = unsafe { std::mem::zeroed() };
+                    let rc = unsafe { duckdb_sys::duckdb_query(con, c_q.as_ptr(), &mut res) };
+                    if rc != duckdb_sys::DuckDBSuccess {
+                        unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
+                        return Vec::new();
+                    }
+                    let rows = unsafe { duckdb_sys::duckdb_row_count(&mut res) } as usize;
+                    let mut out: Vec<String> = Vec::with_capacity(rows);
+                    for r in 0..rows {
+                        let name_ptr =
+                            unsafe { duckdb_sys::duckdb_value_varchar(&mut res, 1, r as u64) };
+                        if name_ptr.is_null() {
+                            continue;
+                        }
+                        let name = unsafe { CStr::from_ptr(name_ptr) }
+                            .to_string_lossy()
+                            .to_string();
+                        unsafe { duckdb_sys::duckdb_free(name_ptr as *mut _) };
+                        out.push(name);
+                    }
+                    unsafe { duckdb_sys::duckdb_destroy_result(&mut res) };
+                    out
+                };
 
             // tables (DDL + data interleaved, matching RunSchemaDumpQuery)
             let table_schema_sql = format!(
@@ -3982,15 +4039,15 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                 let type_id = unsafe { duckdb_sys::duckdb_get_type_id(type_) };
                 let data = unsafe { duckdb_sys::duckdb_vector_get_data(vector) };
                 match type_id {
-	                    duckdb_sys::DUCKDB_TYPE_BOOLEAN => unsafe {
-	                        let ptr = data as *const bool;
-	                        let v = *ptr.add(row as usize);
-	                        if v {
-	                            let _ = out.write_all(b"true");
-	                        } else {
-	                            let _ = out.write_all(b"false");
-	                        }
-	                    },
+                    duckdb_sys::DUCKDB_TYPE_BOOLEAN => unsafe {
+                        let ptr = data as *const bool;
+                        let v = *ptr.add(row as usize);
+                        if v {
+                            let _ = out.write_all(b"true");
+                        } else {
+                            let _ = out.write_all(b"false");
+                        }
+                    },
                     duckdb_sys::DUCKDB_TYPE_TINYINT => unsafe {
                         let ptr = data as *const i8;
                         let _ = out.write_all((*ptr.add(row as usize)).to_string().as_bytes());
@@ -4043,59 +4100,63 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                         let ptr = data as *const f64;
                         write_json_float(out, *ptr.add(row as usize));
                     },
-	                    duckdb_sys::DUCKDB_TYPE_DECIMAL => {
-	                        if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
-	                            write_json_string(out, s.as_str());
-	                        } else {
-	                            let _ = out.write_all(b"null");
-	                        }
-	                    }
-	                    duckdb_sys::DUCKDB_TYPE_BIGNUM => {
-	                        if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
-	                            write_json_string(out, s.as_str());
-	                        } else {
-	                            let _ = out.write_all(b"null");
-	                        }
-	                    }
-	                    duckdb_sys::DUCKDB_TYPE_UNION => unsafe {
-	                        let member_count =
-	                            duckdb_sys::duckdb_union_type_member_count(type_) as usize;
-	                        let tag_vector = duckdb_sys::duckdb_struct_vector_get_child(vector, 0);
-	                        if vector_row_is_null(tag_vector, row) {
-	                            let _ = out.write_all(b"null");
-	                            return;
-	                        }
-	                        let mut tag_type = duckdb_sys::duckdb_vector_get_column_type(tag_vector);
-	                        let tag_type_id = duckdb_sys::duckdb_get_type_id(tag_type);
-	                        let tag_data = duckdb_sys::duckdb_vector_get_data(tag_vector);
-	                        let tag: u64 = match tag_type_id {
-	                            duckdb_sys::DUCKDB_TYPE_UTINYINT => {
-	                                *(tag_data as *const u8).add(row as usize) as u64
-	                            }
-	                            duckdb_sys::DUCKDB_TYPE_USMALLINT => {
-	                                *(tag_data as *const u16).add(row as usize) as u64
-	                            }
-	                            duckdb_sys::DUCKDB_TYPE_UINTEGER => {
-	                                *(tag_data as *const u32).add(row as usize) as u64
-	                            }
-	                            duckdb_sys::DUCKDB_TYPE_UBIGINT => *(tag_data as *const u64).add(row as usize),
-	                            _ => *(tag_data as *const u8).add(row as usize) as u64,
-	                        };
-	                        duckdb_sys::duckdb_destroy_logical_type(&mut tag_type);
+                    duckdb_sys::DUCKDB_TYPE_DECIMAL => {
+                        if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
+                            write_json_string(out, s.as_str());
+                        } else {
+                            let _ = out.write_all(b"null");
+                        }
+                    }
+                    duckdb_sys::DUCKDB_TYPE_BIGNUM => {
+                        if let Some(s) = crate::value::vector_value_to_string(vector, type_, row) {
+                            write_json_string(out, s.as_str());
+                        } else {
+                            let _ = out.write_all(b"null");
+                        }
+                    }
+                    duckdb_sys::DUCKDB_TYPE_UNION => unsafe {
+                        let member_count =
+                            duckdb_sys::duckdb_union_type_member_count(type_) as usize;
+                        let tag_vector = duckdb_sys::duckdb_struct_vector_get_child(vector, 0);
+                        if vector_row_is_null(tag_vector, row) {
+                            let _ = out.write_all(b"null");
+                            return;
+                        }
+                        let mut tag_type = duckdb_sys::duckdb_vector_get_column_type(tag_vector);
+                        let tag_type_id = duckdb_sys::duckdb_get_type_id(tag_type);
+                        let tag_data = duckdb_sys::duckdb_vector_get_data(tag_vector);
+                        let tag: u64 = match tag_type_id {
+                            duckdb_sys::DUCKDB_TYPE_UTINYINT => {
+                                *(tag_data as *const u8).add(row as usize) as u64
+                            }
+                            duckdb_sys::DUCKDB_TYPE_USMALLINT => {
+                                *(tag_data as *const u16).add(row as usize) as u64
+                            }
+                            duckdb_sys::DUCKDB_TYPE_UINTEGER => {
+                                *(tag_data as *const u32).add(row as usize) as u64
+                            }
+                            duckdb_sys::DUCKDB_TYPE_UBIGINT => {
+                                *(tag_data as *const u64).add(row as usize)
+                            }
+                            _ => *(tag_data as *const u8).add(row as usize) as u64,
+                        };
+                        duckdb_sys::duckdb_destroy_logical_type(&mut tag_type);
 
-	                        if (tag as usize) >= member_count {
-	                            let _ = out.write_all(b"null");
-	                            return;
-	                        }
+                        if (tag as usize) >= member_count {
+                            let _ = out.write_all(b"null");
+                            return;
+                        }
 
-	                        let member_vector =
-	                            duckdb_sys::duckdb_struct_vector_get_child(vector, 1 + tag);
-	                        let mut member_type = duckdb_sys::duckdb_union_type_member_type(type_, tag);
+                        let member_vector =
+                            duckdb_sys::duckdb_struct_vector_get_child(vector, 1 + tag);
+                        let mut member_type = duckdb_sys::duckdb_union_type_member_type(type_, tag);
                         let member_name_ptr = duckdb_sys::duckdb_union_type_member_name(type_, tag);
                         let member_name = if member_name_ptr.is_null() {
                             String::new()
                         } else {
-                            let s = CStr::from_ptr(member_name_ptr).to_string_lossy().to_string();
+                            let s = CStr::from_ptr(member_name_ptr)
+                                .to_string_lossy()
+                                .to_string();
                             duckdb_sys::duckdb_free(member_name_ptr as *mut _);
                             s
                         };
@@ -4104,8 +4165,8 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                         let _ = out.write_all(b":");
                         write_json_value(out, member_vector, member_type, row, depth + 1);
                         let _ = out.write_all(b"}");
-	                        duckdb_sys::duckdb_destroy_logical_type(&mut member_type);
-	                    },
+                        duckdb_sys::duckdb_destroy_logical_type(&mut member_type);
+                    },
                     duckdb_sys::DUCKDB_TYPE_LIST => unsafe {
                         let entries = data as *const duckdb_sys::duckdb_list_entry;
                         let entry = *entries.add(row as usize);
@@ -4164,8 +4225,10 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                             };
                             write_json_string(out, name.as_str());
                             let _ = out.write_all(b":");
-                            let child_vector = duckdb_sys::duckdb_struct_vector_get_child(vector, idx);
-                            let mut child_type = duckdb_sys::duckdb_struct_type_child_type(type_, idx);
+                            let child_vector =
+                                duckdb_sys::duckdb_struct_vector_get_child(vector, idx);
+                            let mut child_type =
+                                duckdb_sys::duckdb_struct_type_child_type(type_, idx);
                             write_json_value(out, child_vector, child_type, row, depth + 1);
                             duckdb_sys::duckdb_destroy_logical_type(&mut child_type);
                         }
@@ -4175,8 +4238,10 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                         let entries = data as *const duckdb_sys::duckdb_list_entry;
                         let entry = *entries.add(row as usize);
                         let child_vector = duckdb_sys::duckdb_list_vector_get_child(vector);
-                        let key_vector = duckdb_sys::duckdb_struct_vector_get_child(child_vector, 0);
-                        let value_vector = duckdb_sys::duckdb_struct_vector_get_child(child_vector, 1);
+                        let key_vector =
+                            duckdb_sys::duckdb_struct_vector_get_child(child_vector, 0);
+                        let value_vector =
+                            duckdb_sys::duckdb_struct_vector_get_child(child_vector, 1);
                         let mut key_type = duckdb_sys::duckdb_map_type_key_type(type_);
                         let mut value_type = duckdb_sys::duckdb_map_type_value_type(type_);
                         let _ = out.write_all(b"{");
@@ -4184,9 +4249,7 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                         for i in 0..entry.length {
                             let child_row = entry.offset + i;
                             let Some(key) = crate::value::vector_value_to_string(
-                                key_vector,
-                                key_type,
-                                child_row,
+                                key_vector, key_type, child_row,
                             ) else {
                                 continue;
                             };
@@ -4220,88 +4283,84 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                 }
             }
 
-	            let mut row_index: u64 = 0;
-	            let mut started = false;
-	            loop {
-	                let mut chunk = unsafe { duckdb_sys::duckdb_fetch_chunk(*result) };
-	                if chunk.is_null() {
-	                    break;
-	                }
-	                let chunk_size = unsafe { duckdb_sys::duckdb_data_chunk_get_size(chunk) } as usize;
-	                let mut vectors: Vec<duckdb_sys::duckdb_vector> = Vec::with_capacity(col_count);
-	                let mut types: Vec<duckdb_sys::duckdb_logical_type> = Vec::with_capacity(col_count);
-	                let mut is_json: Vec<bool> = Vec::with_capacity(col_count);
-	                let mut is_bignum: Vec<bool> = Vec::with_capacity(col_count);
-	                for c in 0..col_count {
-	                    let v = unsafe { duckdb_sys::duckdb_data_chunk_get_vector(chunk, c as u64) };
-	                    vectors.push(v);
-	                    let t = unsafe { duckdb_sys::duckdb_vector_get_column_type(v) };
-	                    let type_name = duckbox_render_type(state, t, 0);
-	                    is_json.push(type_name == "json");
-	                    is_bignum.push(type_name == "bignum");
-	                    types.push(t);
-	                }
+            let mut row_index: u64 = 0;
+            let mut started = false;
+            loop {
+                let mut chunk = unsafe { duckdb_sys::duckdb_fetch_chunk(*result) };
+                if chunk.is_null() {
+                    break;
+                }
+                let chunk_size = unsafe { duckdb_sys::duckdb_data_chunk_get_size(chunk) } as usize;
+                let mut vectors: Vec<duckdb_sys::duckdb_vector> = Vec::with_capacity(col_count);
+                let mut types: Vec<duckdb_sys::duckdb_logical_type> = Vec::with_capacity(col_count);
+                let mut is_json: Vec<bool> = Vec::with_capacity(col_count);
+                let mut is_bignum: Vec<bool> = Vec::with_capacity(col_count);
+                for c in 0..col_count {
+                    let v = unsafe { duckdb_sys::duckdb_data_chunk_get_vector(chunk, c as u64) };
+                    vectors.push(v);
+                    let t = unsafe { duckdb_sys::duckdb_vector_get_column_type(v) };
+                    let type_name = duckbox_render_type(state, t, 0);
+                    is_json.push(type_name == "json");
+                    is_bignum.push(type_name == "bignum");
+                    types.push(t);
+                }
 
-	                for r in 0..chunk_size {
-	                    if !started {
-	                        if json_array {
-	                            let _ = out.write_all(b"[");
-	                        }
-	                        started = true;
-	                    }
-	                    if row_index > 0 && json_array {
-	                        let _ = out.write_all(b",\n");
-	                    }
-	                    let _ = out.write_all(b"{");
-	                    for c in 0..col_count {
-	                        if c > 0 {
-	                            let _ = out.write_all(b",");
-	                        }
-	                        output_json_string(&mut out, col_names[c].as_bytes());
-	                        let _ = out.write_all(b":");
-	                        if is_json[c] {
-	                            if vector_row_is_null(vectors[c], r as u64) {
-	                                let _ = out.write_all(b"null");
-	                            } else if let Some(s) = crate::value::vector_value_to_string(
-	                                vectors[c],
-	                                types[c],
-	                                r as u64,
-	                            ) {
-	                                let _ = out.write_all(s.as_bytes());
-	                            } else {
-	                                let _ = out.write_all(b"null");
-	                            }
-	                        } else if col_types[c] == duckdb_sys::DUCKDB_TYPE_BIGNUM || is_bignum[c] {
-	                            if vector_row_is_null(vectors[c], r as u64) {
-	                                let _ = out.write_all(b"null");
-	                            } else if let Some(s) = crate::value::vector_value_to_string(
-	                                vectors[c],
-	                                types[c],
-	                                r as u64,
-	                            ) {
-	                                write_json_string(&mut out, s.trim());
-	                            } else {
-	                                let _ = out.write_all(b"null");
-	                            }
-	                        } else {
-	                            write_json_value(&mut out, vectors[c], types[c], r as u64, 0);
-	                        }
-	                    }
-	                    let _ = out.write_all(b"}");
-	                    if !json_array {
-	                        let _ = out.write_all(b"\n");
-	                    }
-	                    row_index += 1;
-	                }
-	                for t in types.iter_mut() {
-	                    unsafe { duckdb_sys::duckdb_destroy_logical_type(t) };
-	                }
-	                unsafe { duckdb_sys::duckdb_destroy_data_chunk(&mut chunk) };
-	            }
-	            if json_array && started {
-	                let _ = out.write_all(b"]\n");
-	            }
-	        }
+                for r in 0..chunk_size {
+                    if !started {
+                        if json_array {
+                            let _ = out.write_all(b"[");
+                        }
+                        started = true;
+                    }
+                    if row_index > 0 && json_array {
+                        let _ = out.write_all(b",\n");
+                    }
+                    let _ = out.write_all(b"{");
+                    for c in 0..col_count {
+                        if c > 0 {
+                            let _ = out.write_all(b",");
+                        }
+                        output_json_string(&mut out, col_names[c].as_bytes());
+                        let _ = out.write_all(b":");
+                        if is_json[c] {
+                            if vector_row_is_null(vectors[c], r as u64) {
+                                let _ = out.write_all(b"null");
+                            } else if let Some(s) =
+                                crate::value::vector_value_to_string(vectors[c], types[c], r as u64)
+                            {
+                                let _ = out.write_all(s.as_bytes());
+                            } else {
+                                let _ = out.write_all(b"null");
+                            }
+                        } else if col_types[c] == duckdb_sys::DUCKDB_TYPE_BIGNUM || is_bignum[c] {
+                            if vector_row_is_null(vectors[c], r as u64) {
+                                let _ = out.write_all(b"null");
+                            } else if let Some(s) =
+                                crate::value::vector_value_to_string(vectors[c], types[c], r as u64)
+                            {
+                                write_json_string(&mut out, s.trim());
+                            } else {
+                                let _ = out.write_all(b"null");
+                            }
+                        } else {
+                            write_json_value(&mut out, vectors[c], types[c], r as u64, 0);
+                        }
+                    }
+                    let _ = out.write_all(b"}");
+                    if !json_array {
+                        let _ = out.write_all(b"\n");
+                    }
+                    row_index += 1;
+                }
+                for t in types.iter_mut() {
+                    unsafe { duckdb_sys::duckdb_destroy_logical_type(t) };
+                }
+                unsafe { duckdb_sys::duckdb_destroy_data_chunk(&mut chunk) };
+            }
+            if json_array && started {
+                let _ = out.write_all(b"]\n");
+            }
+        }
         page_or_print_stdout(state, &buf);
         return 0;
     }
@@ -4876,29 +4935,29 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
             let mut buf: Vec<u8> = Vec::new();
             let mut out = std::io::Cursor::new(&mut buf);
             let mut data: Vec<Vec<String>> = Vec::with_capacity(row_count);
-	            for r in 0..row_count {
-	                let mut row: Vec<String> = Vec::with_capacity(col_count);
-	                for c in 0..col_count {
-	                    let mut cell = rows[r][c]
-	                        .clone()
-	                        .unwrap_or_else(|| state.nullValue.clone());
-	                    if cell.starts_with('[') || cell.starts_with('{') {
-	                        cell = normalize_complex_value_for_shell_display(
-	                            cell.as_str(),
-	                            col_unquote_json_literals[c],
-	                        )
-	                        .into_owned();
-	                    }
-	                    if state.mode == RenderMode::BOX {
-	                        cell = box_convert_value(&cell);
-	                    }
-	                    if state.mode == RenderMode::MARKDOWN && cell.contains('|') {
-	                        cell = cell.replace('|', "\\|");
-	                    }
-	                    row.push(cell);
-	                }
-	                data.push(row);
-	            }
+            for r in 0..row_count {
+                let mut row: Vec<String> = Vec::with_capacity(col_count);
+                for c in 0..col_count {
+                    let mut cell = rows[r][c]
+                        .clone()
+                        .unwrap_or_else(|| state.nullValue.clone());
+                    if cell.starts_with('[') || cell.starts_with('{') {
+                        cell = normalize_complex_value_for_shell_display(
+                            cell.as_str(),
+                            col_unquote_json_literals[c],
+                        )
+                        .into_owned();
+                    }
+                    if state.mode == RenderMode::BOX {
+                        cell = box_convert_value(&cell);
+                    }
+                    if state.mode == RenderMode::MARKDOWN && cell.contains('|') {
+                        cell = cell.replace('|', "\\|");
+                    }
+                    row.push(cell);
+                }
+                data.push(row);
+            }
 
             let mut col_width: Vec<usize> = Vec::with_capacity(col_count);
             let mut right_align: Vec<bool> = Vec::with_capacity(col_count);
@@ -4917,7 +4976,7 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
                 if state.mode == RenderMode::BOX {
                     header = box_convert_value(&header);
                 }
-	                col_width[c] = col_width[c].max(render_length(&header));
+                col_width[c] = col_width[c].max(render_length(&header));
                 for r in 0..row_count {
                     col_width[c] = col_width[c].max(render_length(&data[r][c]));
                 }
@@ -5098,7 +5157,10 @@ fn render_result(state: &mut ShellState, result: &mut duckdb_sys::duckdb_result)
     }
 }
 
-fn echo_slices_for_shell(extracted: duckdb_sys::duckdb_extracted_statements, cmd: &str) -> Vec<String> {
+fn echo_slices_for_shell(
+    extracted: duckdb_sys::duckdb_extracted_statements,
+    cmd: &str,
+) -> Vec<String> {
     let Ok(query) = CString::new(cmd) else {
         return Vec::new();
     };
@@ -5384,17 +5446,15 @@ fn run_sql_script(state: &mut ShellState, con: duckdb_sys::duckdb_connection, cm
                             true
                         } else {
                             match type_id {
-                            duckdb_sys::DUCKDB_TYPE_UNION => !matches!(
-                                state.mode,
-                                RenderMode::JSON | RenderMode::JSONLINES | RenderMode::DUCKBOX
-                            ),
-	                            duckdb_sys::DUCKDB_TYPE_BIGNUM => {
-	                                !matches!(
-	                                    state.mode,
-	                                    RenderMode::DUCKBOX | RenderMode::JSON | RenderMode::JSONLINES
-	                                )
-	                            }
-                            _ => false,
+                                duckdb_sys::DUCKDB_TYPE_UNION => !matches!(
+                                    state.mode,
+                                    RenderMode::JSON | RenderMode::JSONLINES | RenderMode::DUCKBOX
+                                ),
+                                duckdb_sys::DUCKDB_TYPE_BIGNUM => !matches!(
+                                    state.mode,
+                                    RenderMode::DUCKBOX | RenderMode::JSON | RenderMode::JSONLINES
+                                ),
+                                _ => false,
                             }
                         };
                         if cast_this {
@@ -6192,7 +6252,9 @@ fn parse_tables_filter_pattern(filter_pattern: &str) -> (String, String) {
     (schema_filter, table_filter)
 }
 
-fn table_metadata_collect_from_result(result: &mut duckdb_sys::duckdb_result) -> Vec<TableMetadataTable> {
+fn table_metadata_collect_from_result(
+    result: &mut duckdb_sys::duckdb_result,
+) -> Vec<TableMetadataTable> {
     let row_count = unsafe { duckdb_sys::duckdb_row_count(result) } as usize;
     let mut tables: Vec<TableMetadataTable> = Vec::new();
     let mut cur_key: Option<(String, String, String)> = None;
@@ -6265,7 +6327,10 @@ enum TableMetadataHighlightElement {
     ViewLayout,
 }
 
-fn table_metadata_terminal_code(state: &ShellState, element: TableMetadataHighlightElement) -> &'static str {
+fn table_metadata_terminal_code(
+    state: &ShellState,
+    element: TableMetadataHighlightElement,
+) -> &'static str {
     use crate::state::HighlightMode;
     match element {
         TableMetadataHighlightElement::DatabaseName => match state.highlight_mode {
@@ -6286,7 +6351,12 @@ fn table_metadata_terminal_code(state: &ShellState, element: TableMetadataHighli
     }
 }
 
-fn table_metadata_push(out: &mut String, state: &ShellState, element: TableMetadataHighlightElement, text: &str) {
+fn table_metadata_push(
+    out: &mut String,
+    state: &ShellState,
+    element: TableMetadataHighlightElement,
+    text: &str,
+) {
     if !state.highlighting_enabled {
         out.push_str(text);
         return;
@@ -6379,7 +6449,11 @@ impl TableMetadataTableRenderInfo {
         }
 
         let name_max = max_render_width.saturating_sub(4);
-        Self::truncate_value_if_required(&mut self.table.table_name, &mut self.table_name_length, name_max);
+        Self::truncate_value_if_required(
+            &mut self.table.table_name,
+            &mut self.table_name_length,
+            name_max,
+        );
 
         let old_render_width = self.render_width;
         let mut total_column_length = self.per_column_width();
@@ -6387,7 +6461,9 @@ impl TableMetadataTableRenderInfo {
             static MIN_COMPONENT_SIZE: usize = 5;
             let component_count = self.max_component_widths.len();
             let min_leftover_size = component_count * MIN_COMPONENT_SIZE;
-            if component_count > 0 && self.max_component_widths[0] + min_leftover_size > max_render_width {
+            if component_count > 0
+                && self.max_component_widths[0] + min_leftover_size > max_render_width
+            {
                 self.max_component_widths[0] = max_render_width.saturating_sub(min_leftover_size);
             }
             total_column_length = self.per_column_width();
@@ -6411,11 +6487,16 @@ impl TableMetadataTableRenderInfo {
             for column_render in self.column_renders.iter_mut() {
                 for col in column_render.columns.iter_mut() {
                     for (component_idx, component) in col.components.iter_mut().enumerate() {
-                        let max_w = self.max_component_widths
+                        let max_w = self
+                            .max_component_widths
                             .get(component_idx)
                             .copied()
                             .unwrap_or(max_render_width);
-                        Self::truncate_value_if_required(&mut component.text, &mut component.render_width, max_w);
+                        Self::truncate_value_if_required(
+                            &mut component.text,
+                            &mut component.render_width,
+                            max_w,
+                        );
                     }
                 }
             }
@@ -6542,7 +6623,11 @@ impl TableMetadataLine {
                         table_metadata_push(out, state, component.element, &component.text);
 
                         let mut pad = String::new();
-                        let max_w = self.max_component_widths.get(component_idx).copied().unwrap_or(0);
+                        let max_w = self
+                            .max_component_widths
+                            .get(component_idx)
+                            .copied()
+                            .unwrap_or(0);
                         pad.push_str(&" ".repeat(max_w.saturating_sub(component.render_width) + 1));
                         if extra_render_width > 0 {
                             let render_count = if is_last {
@@ -6567,7 +6652,8 @@ impl TableMetadataLine {
         }
 
         if line_idx == 2
-            || (render_table.estimated_size_length.is_some() && line_idx == render_table.column_lines() + 3)
+            || (render_table.estimated_size_length.is_some()
+                && line_idx == render_table.column_lines() + 3)
         {
             let mut blank = String::new();
             blank.push_str(vertical);
@@ -6676,9 +6762,13 @@ fn render_table_metadata(state: &ShellState, tables: &[TableMetadataTable]) -> V
         }
 
         let component_count = 2 + if has_constraint_component { 1 } else { 0 };
-        let mut render_row = TableMetadataColumnRenderRow { columns: Vec::new() };
+        let mut render_row = TableMetadataColumnRenderRow {
+            columns: Vec::new(),
+        };
         for c in &table.columns {
-            let mut col_display = TableMetadataColumnRenderInfo { components: Vec::new() };
+            let mut col_display = TableMetadataColumnRenderInfo {
+                components: Vec::new(),
+            };
             let name_element = if c.is_primary_key {
                 TableMetadataHighlightElement::PrimaryKeyColumn
             } else {
@@ -6769,7 +6859,8 @@ fn render_table_metadata(state: &ShellState, tables: &[TableMetadataTable]) -> V
         if table.column_renders[0].columns.len() <= SPLIT_THRESHOLD {
             continue;
         }
-        let max_split_count = (table.column_renders[0].columns.len() + SPLIT_THRESHOLD - 1) / SPLIT_THRESHOLD;
+        let max_split_count =
+            (table.column_renders[0].columns.len() + SPLIT_THRESHOLD - 1) / SPLIT_THRESHOLD;
         let width_per_split = table.per_column_width();
         let max_splits = max_render_width / width_per_split;
         if max_splits <= 1 {
@@ -6851,13 +6942,15 @@ fn render_table_metadata(state: &ShellState, tables: &[TableMetadataTable]) -> V
                         }
                         let mut new_max_component_widths: Vec<usize> = Vec::new();
                         for component_idx in 0..existing_line.max_component_widths.len() {
-                            new_max_component_widths.push(existing_line.max_component_widths[component_idx].max(
-                                current_table
-                                    .max_component_widths
-                                    .get(component_idx)
-                                    .copied()
-                                    .unwrap_or(0),
-                            ));
+                            new_max_component_widths.push(
+                                existing_line.max_component_widths[component_idx].max(
+                                    current_table
+                                        .max_component_widths
+                                        .get(component_idx)
+                                        .copied()
+                                        .unwrap_or(0),
+                                ),
+                            );
                         }
                         let mut new_column_render_width = 3usize;
                         for w in &new_max_component_widths {
@@ -6866,7 +6959,8 @@ fn render_table_metadata(state: &ShellState, tables: &[TableMetadataTable]) -> V
                         let mut new_rendering_width = render_width.max(existing_line.render_width);
                         new_rendering_width = new_rendering_width.max(new_column_render_width);
 
-                        let extra_width = new_rendering_width.saturating_sub(existing_line.render_width);
+                        let extra_width =
+                            new_rendering_width.saturating_sub(existing_line.render_width);
                         if display.render_width + extra_width > max_render_width {
                             continue;
                         }
@@ -6946,7 +7040,12 @@ fn render_table_metadata(state: &ShellState, tables: &[TableMetadataTable]) -> V
                     is_last,
                 );
             }
-            table_metadata_push(&mut output, state, TableMetadataHighlightElement::Layout, "\n");
+            table_metadata_push(
+                &mut output,
+                state,
+                TableMetadataHighlightElement::Layout,
+                "\n",
+            );
         }
     }
 
@@ -7120,7 +7219,8 @@ fn try_render_shell_describe(
     }
     content_width = content_width.min(max_content_width);
 
-    let highlight_results = state.highlighting_enabled && state.highlight_results != OptionType::Off;
+    let highlight_results =
+        state.highlighting_enabled && state.highlight_results != OptionType::Off;
     let ansi_layout = terminal_code(HighlightStyle {
         color: PrintColor::Gray,
         intensity: PrintIntensity::Standard,
@@ -8173,7 +8273,8 @@ fn render_duckbox_result(
                     // move these columns into the next bucket and remove the current
                     by_capacity.remove(&largest_cap);
                     by_capacity.entry(second).or_default().extend(column_list);
-                    shorten_amount_required = shorten_amount_required.saturating_sub(total_potential);
+                    shorten_amount_required =
+                        shorten_amount_required.saturating_sub(total_potential);
                 }
 
                 for (c, amount) in actual_shorten.iter().copied().enumerate() {
@@ -8210,7 +8311,8 @@ fn render_duckbox_result(
                     }
                     let c = idx_i64 as usize;
                     if pruned_columns.insert(c) {
-                        total_render_length = total_render_length.saturating_sub(column_widths[c] + 3);
+                        total_render_length =
+                            total_render_length.saturating_sub(column_widths[c] + 3);
                     }
                     offset = if offset >= 0 { -offset - 1 } else { -offset };
                     if pruned_columns.len() >= col_count {
@@ -8393,6 +8495,7 @@ fn render_duckbox_result(
         state.pager_command.clone()
     };
     let use_pager = state.stdout_is_console
+        && state.stdin_is_interactive
         && state.outfile.is_empty()
         && matches!(&state.out, OutputHandle::Stdout)
         && state.pager_mode == PagerMode::On;
@@ -8773,7 +8876,8 @@ fn render_duckbox_result(
                     // BoxRenderer stops analyzing once row_idx >= max_analyze_rows, where row_idx increments
                     // by the fetched chunk size. This effectively rounds the analyze limit up to a chunk
                     // boundary.
-                    let rounded = ((analyze_limit_effective + chunk_size - 1) / chunk_size) * chunk_size;
+                    let rounded =
+                        ((analyze_limit_effective + chunk_size - 1) / chunk_size) * chunk_size;
                     analyze_limit_effective = rounded.max(analyze_limit_effective);
                     analyze_limit_adjusted = true;
                 }
@@ -8808,16 +8912,16 @@ fn render_duckbox_result(
                     let raw = crate::value::vector_value_to_string(vectors[c], types[c], r as u64);
                     let rendered = match raw {
                         None => None,
-                    Some(v) => {
-                        let v = if v.starts_with('[') || v.starts_with('{') {
-                            normalize_complex_value_for_shell_display(
-                                v.as_str(),
-                                col_unquote_json_literals[c],
-                            )
-                            .into_owned()
-                        } else {
-                            v
-                        };
+                        Some(v) => {
+                            let v = if v.starts_with('[') || v.starts_with('{') {
+                                normalize_complex_value_for_shell_display(
+                                    v.as_str(),
+                                    col_unquote_json_literals[c],
+                                )
+                                .into_owned()
+                            } else {
+                                v
+                            };
                             let v = if is_describe_output && c == 1 {
                                 v.to_ascii_lowercase()
                             } else {
@@ -8875,7 +8979,8 @@ fn render_duckbox_result(
                             }
                             if all_readable {
                                 for c in 0..col_count {
-                                    col_width[c] = col_width[c].max(duckbox_render_length(&readable[c]));
+                                    col_width[c] =
+                                        col_width[c].max(duckbox_render_length(&readable[c]));
                                 }
                                 footer_number_row = Some(readable);
                             }
@@ -9069,9 +9174,8 @@ fn render_duckbox_result(
                                             s.trim_start().chars().next(),
                                             Some('{') | Some('[')
                                         );
-                                        let is_pretty_printable = col_logical_type_ids
-                                            .get(src_c)
-                                            .is_some_and(|t| {
+                                        let is_pretty_printable =
+                                            col_logical_type_ids.get(src_c).is_some_and(|t| {
                                                 matches!(
                                                     *t,
                                                     duckdb_sys::DUCKDB_TYPE_LIST
@@ -9079,11 +9183,10 @@ fn render_duckbox_result(
                                                         | duckdb_sys::DUCKDB_TYPE_ARRAY
                                                         | duckdb_sys::DUCKDB_TYPE_MAP
                                                 )
-                                            })
-                                            || col_type_names
+                                            }) || col_type_names
                                                 .get(src_c)
                                                 .is_some_and(|t| t == "json" || t == "variant")
-                                            || looks_bracketed;
+                                                || looks_bracketed;
                                         if is_pretty_printable {
                                             (
                                                 crate::duckbox_json_formatter::format_value(
@@ -9116,7 +9219,12 @@ fn render_duckbox_result(
                                         )
                                     }
                                 } else {
-                                    split_and_render_lines(&formatted, render_col_width[out_c], false, 1)
+                                    split_and_render_lines(
+                                        &formatted,
+                                        render_col_width[out_c],
+                                        false,
+                                        1,
+                                    )
                                 };
                                 row_line_count = row_line_count.max(lines.len());
                                 rendered_cells.push(lines);
@@ -9285,9 +9393,8 @@ fn render_duckbox_result(
                             if stream_expand_rows && src_c != SPLIT_COLUMN {
                                 let looks_bracketed =
                                     matches!(s.trim_start().chars().next(), Some('{') | Some('['));
-                                let is_pretty_printable = col_logical_type_ids
-                                    .get(src_c)
-                                    .is_some_and(|t| {
+                                let is_pretty_printable =
+                                    col_logical_type_ids.get(src_c).is_some_and(|t| {
                                         matches!(
                                             *t,
                                             duckdb_sys::DUCKDB_TYPE_LIST
@@ -9295,11 +9402,10 @@ fn render_duckbox_result(
                                                 | duckdb_sys::DUCKDB_TYPE_ARRAY
                                                 | duckdb_sys::DUCKDB_TYPE_MAP
                                         )
-                                    })
-                                    || col_type_names
+                                    }) || col_type_names
                                         .get(src_c)
                                         .is_some_and(|t| t == "json" || t == "variant")
-                                    || looks_bracketed;
+                                        || looks_bracketed;
                                 if is_pretty_printable {
                                     (
                                         crate::duckbox_json_formatter::format_value(
@@ -9470,56 +9576,93 @@ fn render_duckbox_result(
             } else {
                 // footer
                 if footer.must_show_footer {
-                let mut render_anything = true;
-                let minimum_length = footer.row_count_str.len() + footer.column_count_str.len() + 6;
-                let render_rows_and_columns = total_render_length >= minimum_length
-                    && ((has_hidden_columns && row_count > 0)
-                        || (row_count >= 10 && col_count > 1));
-                let render_rows = total_render_length >= footer.render_length
-                    && (row_count == 0 || row_count >= 10);
-                if !render_rows && !render_rows_and_columns {
-                    render_anything = false;
-                }
-                let left = if render_anything { BOX_123 } else { BOX_12 };
-                let right = if render_anything { BOX_134 } else { BOX_14 };
-                // For empty results we already rendered the header separator; avoid a duplicate divider line.
-                if row_count != 0 {
-                    box_row_sep(
-                        &mut writer,
-                        &render_col_width,
-                        BOX_24,
-                        BOX_123,
-                        BOX_DMIDDLE,
-                        BOX_134,
-                        &layout_write,
-                    );
-                }
-                if render_anything {
-                    let padding =
-                        total_render_length.saturating_sub(footer.row_count_str.len() + 4);
-                    layout_write(&mut writer, BOX_13);
-                    layout_write(&mut writer, " ");
-                    let mut footer_line = String::new();
-                    if render_rows_and_columns {
-                        footer_line.push_str(&footer.row_count_str);
-                        footer_line.push_str(
-                            &" ".repeat(padding.saturating_sub(footer.column_count_str.len())),
-                        );
-                        footer_line.push_str(&footer.column_count_str);
-                        write_styled(&mut writer, &ansi_layout, &footer_line);
-                    } else if render_rows {
-                        let lpad = padding / 2;
-                        let rpad = padding - lpad;
-                        footer_line.push_str(&" ".repeat(lpad));
-                        footer_line.push_str(&footer.row_count_str);
-                        footer_line.push_str(&" ".repeat(rpad));
-                        write_styled(&mut writer, &ansi_layout, &footer_line);
+                    let mut render_anything = true;
+                    let minimum_length =
+                        footer.row_count_str.len() + footer.column_count_str.len() + 6;
+                    let render_rows_and_columns = total_render_length >= minimum_length
+                        && ((has_hidden_columns && row_count > 0)
+                            || (row_count >= 10 && col_count > 1));
+                    let render_rows = total_render_length >= footer.render_length
+                        && (row_count == 0 || row_count >= 10);
+                    if !render_rows && !render_rows_and_columns {
+                        render_anything = false;
                     }
-                    layout_write(&mut writer, " ");
-                    layout_write(&mut writer, BOX_13);
-                    writer.write_all(b"\n");
-                    if footer.has_hidden_rows {
-                        if !footer.readable_rows_str.is_empty() {
+                    let left = if render_anything { BOX_123 } else { BOX_12 };
+                    let right = if render_anything { BOX_134 } else { BOX_14 };
+                    // For empty results we already rendered the header separator; avoid a duplicate divider line.
+                    if row_count != 0 {
+                        box_row_sep(
+                            &mut writer,
+                            &render_col_width,
+                            BOX_24,
+                            BOX_123,
+                            BOX_DMIDDLE,
+                            BOX_134,
+                            &layout_write,
+                        );
+                    }
+                    if render_anything {
+                        let padding =
+                            total_render_length.saturating_sub(footer.row_count_str.len() + 4);
+                        layout_write(&mut writer, BOX_13);
+                        layout_write(&mut writer, " ");
+                        let mut footer_line = String::new();
+                        if render_rows_and_columns {
+                            footer_line.push_str(&footer.row_count_str);
+                            footer_line.push_str(
+                                &" ".repeat(padding.saturating_sub(footer.column_count_str.len())),
+                            );
+                            footer_line.push_str(&footer.column_count_str);
+                            write_styled(&mut writer, &ansi_layout, &footer_line);
+                        } else if render_rows {
+                            let lpad = padding / 2;
+                            let rpad = padding - lpad;
+                            footer_line.push_str(&" ".repeat(lpad));
+                            footer_line.push_str(&footer.row_count_str);
+                            footer_line.push_str(&" ".repeat(rpad));
+                            write_styled(&mut writer, &ansi_layout, &footer_line);
+                        }
+                        layout_write(&mut writer, " ");
+                        layout_write(&mut writer, BOX_13);
+                        writer.write_all(b"\n");
+                        if footer.has_hidden_rows {
+                            if !footer.readable_rows_str.is_empty() {
+                                layout_write(&mut writer, BOX_13);
+                                layout_write(&mut writer, " ");
+                                let s = format!("({})", footer.readable_rows_str);
+                                let buf = truncate_for_cell(
+                                    &s,
+                                    total_render_length.saturating_sub(4),
+                                    false,
+                                );
+                                write_styled(
+                                    &mut writer,
+                                    &ansi_null_value,
+                                    std::str::from_utf8(&buf).unwrap_or(""),
+                                );
+                                layout_write(&mut writer, " ");
+                                layout_write(&mut writer, BOX_13);
+                                writer.write_all(b"\n");
+                            }
+                            if !footer.shown_str.is_empty() {
+                                layout_write(&mut writer, BOX_13);
+                                layout_write(&mut writer, " ");
+                                let s = format!("({})", footer.shown_str);
+                                let buf = truncate_for_cell(
+                                    &s,
+                                    total_render_length.saturating_sub(4),
+                                    false,
+                                );
+                                write_styled(
+                                    &mut writer,
+                                    &ansi_null_value,
+                                    std::str::from_utf8(&buf).unwrap_or(""),
+                                );
+                                layout_write(&mut writer, " ");
+                                layout_write(&mut writer, BOX_13);
+                                writer.write_all(b"\n");
+                            }
+                        } else if !footer.readable_rows_str.is_empty() {
                             layout_write(&mut writer, BOX_13);
                             layout_write(&mut writer, " ");
                             let s = format!("({})", footer.readable_rows_str);
@@ -9534,38 +9677,8 @@ fn render_duckbox_result(
                             layout_write(&mut writer, BOX_13);
                             writer.write_all(b"\n");
                         }
-                        if !footer.shown_str.is_empty() {
-                            layout_write(&mut writer, BOX_13);
-                            layout_write(&mut writer, " ");
-                            let s = format!("({})", footer.shown_str);
-                            let buf =
-                                truncate_for_cell(&s, total_render_length.saturating_sub(4), false);
-                            write_styled(
-                                &mut writer,
-                                &ansi_null_value,
-                                std::str::from_utf8(&buf).unwrap_or(""),
-                            );
-                            layout_write(&mut writer, " ");
-                            layout_write(&mut writer, BOX_13);
-                            writer.write_all(b"\n");
-                        }
-                    } else if !footer.readable_rows_str.is_empty() {
-                        layout_write(&mut writer, BOX_13);
-                        layout_write(&mut writer, " ");
-                        let s = format!("({})", footer.readable_rows_str);
-                        let buf =
-                            truncate_for_cell(&s, total_render_length.saturating_sub(4), false);
-                        write_styled(
-                            &mut writer,
-                            &ansi_null_value,
-                            std::str::from_utf8(&buf).unwrap_or(""),
-                        );
-                        layout_write(&mut writer, " ");
-                        layout_write(&mut writer, BOX_13);
-                        writer.write_all(b"\n");
                     }
-                }
-                let _ = (left, right);
+                    let _ = (left, right);
                 }
 
                 if footer.must_show_footer {
@@ -9802,7 +9915,9 @@ fn render_duckbox_result(
                                 | duckdb_sys::DUCKDB_TYPE_ARRAY
                                 | duckdb_sys::DUCKDB_TYPE_MAP
                         )
-                    }) || col_type_names.get(src_c).is_some_and(|t| t == "json" || t == "variant")
+                    }) || col_type_names
+                        .get(src_c)
+                        .is_some_and(|t| t == "json" || t == "variant")
                         || looks_bracketed;
                     if is_pretty_printable {
                         (
@@ -9822,7 +9937,11 @@ fn render_duckbox_result(
                 };
                 let lines = if expand_rows {
                     if is_pretty_printable {
-                        duckbox_truncate_lines(&formatted, render_col_width[out_c], max_rows_per_row)
+                        duckbox_truncate_lines(
+                            &formatted,
+                            render_col_width[out_c],
+                            max_rows_per_row,
+                        )
                     } else {
                         split_and_render_lines(
                             &formatted,
@@ -9954,10 +10073,7 @@ fn render_duckbox_result(
                 layout_write(&mut writer, BOX_13);
                 layout_write(&mut writer, " ");
                 for c in 0..render_column_map.len() {
-                    let s = row_cells[c]
-                        .get(line_idx)
-                        .map(|s| s.as_str())
-                        .unwrap_or("");
+                    let s = row_cells[c].get(line_idx).map(|s| s.as_str()).unwrap_or("");
                     let src_c = render_column_map[c];
                     if src_c == SPLIT_COLUMN {
                         let buf = truncate_center_for_cell(s, render_col_width[c]);
@@ -10002,54 +10118,86 @@ fn render_duckbox_result(
         } else {
             // footer
             if footer.must_show_footer {
-            let mut render_anything = true;
-            let minimum_length = footer.row_count_str.len() + footer.column_count_str.len() + 6;
-            let render_rows_and_columns = total_render_length >= minimum_length
-                && ((has_hidden_columns && row_count > 0) || (row_count >= 10 && col_count > 1));
-            let render_rows =
-                total_render_length >= footer.render_length && (row_count == 0 || row_count >= 10);
-            if !render_rows && !render_rows_and_columns {
-                render_anything = false;
-            }
-            let left = if render_anything { BOX_123 } else { BOX_12 };
-            let right = if render_anything { BOX_134 } else { BOX_14 };
-            // For empty results we already rendered the header separator; avoid a duplicate divider line.
-            if row_count != 0 {
-                box_row_sep(
-                    &mut writer,
-                    &render_col_width,
-                    BOX_24,
-                    BOX_123,
-                    BOX_DMIDDLE,
-                    BOX_134,
-                    &layout_write,
-                );
-            }
-            if render_anything {
-                let padding = total_render_length.saturating_sub(footer.row_count_str.len() + 4);
-                layout_write(&mut writer, BOX_13);
-                layout_write(&mut writer, " ");
-                let mut footer_line = String::new();
-                if render_rows_and_columns {
-                    footer_line.push_str(&footer.row_count_str);
-                    footer_line.push_str(
-                        &" ".repeat(padding.saturating_sub(footer.column_count_str.len())),
-                    );
-                    footer_line.push_str(&footer.column_count_str);
-                    write_styled(&mut writer, &ansi_layout, &footer_line);
-                } else if render_rows {
-                    let lpad = padding / 2;
-                    let rpad = padding - lpad;
-                    footer_line.push_str(&" ".repeat(lpad));
-                    footer_line.push_str(&footer.row_count_str);
-                    footer_line.push_str(&" ".repeat(rpad));
-                    write_styled(&mut writer, &ansi_layout, &footer_line);
+                let mut render_anything = true;
+                let minimum_length = footer.row_count_str.len() + footer.column_count_str.len() + 6;
+                let render_rows_and_columns = total_render_length >= minimum_length
+                    && ((has_hidden_columns && row_count > 0)
+                        || (row_count >= 10 && col_count > 1));
+                let render_rows = total_render_length >= footer.render_length
+                    && (row_count == 0 || row_count >= 10);
+                if !render_rows && !render_rows_and_columns {
+                    render_anything = false;
                 }
-                layout_write(&mut writer, " ");
-                layout_write(&mut writer, BOX_13);
-                writer.write_all(b"\n");
-                if footer.has_hidden_rows {
-                    if !footer.readable_rows_str.is_empty() {
+                let left = if render_anything { BOX_123 } else { BOX_12 };
+                let right = if render_anything { BOX_134 } else { BOX_14 };
+                // For empty results we already rendered the header separator; avoid a duplicate divider line.
+                if row_count != 0 {
+                    box_row_sep(
+                        &mut writer,
+                        &render_col_width,
+                        BOX_24,
+                        BOX_123,
+                        BOX_DMIDDLE,
+                        BOX_134,
+                        &layout_write,
+                    );
+                }
+                if render_anything {
+                    let padding =
+                        total_render_length.saturating_sub(footer.row_count_str.len() + 4);
+                    layout_write(&mut writer, BOX_13);
+                    layout_write(&mut writer, " ");
+                    let mut footer_line = String::new();
+                    if render_rows_and_columns {
+                        footer_line.push_str(&footer.row_count_str);
+                        footer_line.push_str(
+                            &" ".repeat(padding.saturating_sub(footer.column_count_str.len())),
+                        );
+                        footer_line.push_str(&footer.column_count_str);
+                        write_styled(&mut writer, &ansi_layout, &footer_line);
+                    } else if render_rows {
+                        let lpad = padding / 2;
+                        let rpad = padding - lpad;
+                        footer_line.push_str(&" ".repeat(lpad));
+                        footer_line.push_str(&footer.row_count_str);
+                        footer_line.push_str(&" ".repeat(rpad));
+                        write_styled(&mut writer, &ansi_layout, &footer_line);
+                    }
+                    layout_write(&mut writer, " ");
+                    layout_write(&mut writer, BOX_13);
+                    writer.write_all(b"\n");
+                    if footer.has_hidden_rows {
+                        if !footer.readable_rows_str.is_empty() {
+                            layout_write(&mut writer, BOX_13);
+                            layout_write(&mut writer, " ");
+                            let s = format!("({})", footer.readable_rows_str);
+                            let buf =
+                                truncate_for_cell(&s, total_render_length.saturating_sub(4), false);
+                            write_styled(
+                                &mut writer,
+                                &ansi_null_value,
+                                std::str::from_utf8(&buf).unwrap_or(""),
+                            );
+                            layout_write(&mut writer, " ");
+                            layout_write(&mut writer, BOX_13);
+                            writer.write_all(b"\n");
+                        }
+                        if !footer.shown_str.is_empty() {
+                            layout_write(&mut writer, BOX_13);
+                            layout_write(&mut writer, " ");
+                            let s = format!("({})", footer.shown_str);
+                            let buf =
+                                truncate_for_cell(&s, total_render_length.saturating_sub(4), false);
+                            write_styled(
+                                &mut writer,
+                                &ansi_null_value,
+                                std::str::from_utf8(&buf).unwrap_or(""),
+                            );
+                            layout_write(&mut writer, " ");
+                            layout_write(&mut writer, BOX_13);
+                            writer.write_all(b"\n");
+                        }
+                    } else if !footer.readable_rows_str.is_empty() {
                         layout_write(&mut writer, BOX_13);
                         layout_write(&mut writer, " ");
                         let s = format!("({})", footer.readable_rows_str);
@@ -10064,37 +10212,8 @@ fn render_duckbox_result(
                         layout_write(&mut writer, BOX_13);
                         writer.write_all(b"\n");
                     }
-                    if !footer.shown_str.is_empty() {
-                        layout_write(&mut writer, BOX_13);
-                        layout_write(&mut writer, " ");
-                        let s = format!("({})", footer.shown_str);
-                        let buf =
-                            truncate_for_cell(&s, total_render_length.saturating_sub(4), false);
-                        write_styled(
-                            &mut writer,
-                            &ansi_null_value,
-                            std::str::from_utf8(&buf).unwrap_or(""),
-                        );
-                        layout_write(&mut writer, " ");
-                        layout_write(&mut writer, BOX_13);
-                        writer.write_all(b"\n");
-                    }
-                } else if !footer.readable_rows_str.is_empty() {
-                    layout_write(&mut writer, BOX_13);
-                    layout_write(&mut writer, " ");
-                    let s = format!("({})", footer.readable_rows_str);
-                    let buf = truncate_for_cell(&s, total_render_length.saturating_sub(4), false);
-                    write_styled(
-                        &mut writer,
-                        &ansi_null_value,
-                        std::str::from_utf8(&buf).unwrap_or(""),
-                    );
-                    layout_write(&mut writer, " ");
-                    layout_write(&mut writer, BOX_13);
-                    writer.write_all(b"\n");
                 }
-            }
-            let _ = (left, right);
+                let _ = (left, right);
             }
 
             if footer.must_show_footer {
@@ -10433,12 +10552,17 @@ fn run_duckbox_query_impl(
                                 select_list.push_str(&ident);
                             }
                         }
-                        let wrapper_sql = format!("select {} from ({}) t", select_list, cmd_no_semi);
+                        let wrapper_sql =
+                            format!("select {} from ({}) t", select_list, cmd_no_semi);
                         if let Ok(wrapper_cstr) = CString::new(wrapper_sql) {
                             let mut string_result: duckdb_sys::duckdb_result =
                                 unsafe { std::mem::zeroed() };
                             let string_rc = unsafe {
-                                duckdb_sys::duckdb_query(con, wrapper_cstr.as_ptr(), &mut string_result)
+                                duckdb_sys::duckdb_query(
+                                    con,
+                                    wrapper_cstr.as_ptr(),
+                                    &mut string_result,
+                                )
                             };
                             if string_rc == duckdb_sys::DuckDBSuccess {
                                 render_rc = render_duckbox_result(
@@ -10459,15 +10583,21 @@ fn run_duckbox_query_impl(
                                 );
                             }
                         } else {
-                            render_rc =
-                                render_duckbox_result(state, cmd, limits_override, &mut result, None);
+                            render_rc = render_duckbox_result(
+                                state,
+                                cmd,
+                                limits_override,
+                                &mut result,
+                                None,
+                            );
                         }
                     } else {
                         render_rc =
                             render_duckbox_result(state, cmd, limits_override, &mut result, None);
                     }
                 } else {
-                    render_rc = render_duckbox_result(state, cmd, limits_override, &mut result, None);
+                    render_rc =
+                        render_duckbox_result(state, cmd, limits_override, &mut result, None);
                 }
 
                 // Best-effort last-result support ("FROM _"): keep a temp table "_" in sync with the last successful query
@@ -10498,9 +10628,11 @@ fn run_duckbox_query_impl(
                                 ok = false;
                                 break;
                             };
-                            let mut tmp_res: duckdb_sys::duckdb_result = unsafe { std::mem::zeroed() };
-                            let rc =
-                                unsafe { duckdb_sys::duckdb_query(con, sql_c.as_ptr(), &mut tmp_res) };
+                            let mut tmp_res: duckdb_sys::duckdb_result =
+                                unsafe { std::mem::zeroed() };
+                            let rc = unsafe {
+                                duckdb_sys::duckdb_query(con, sql_c.as_ptr(), &mut tmp_res)
+                            };
                             unsafe { duckdb_sys::duckdb_destroy_result(&mut tmp_res) };
                             if rc != duckdb_sys::DuckDBSuccess {
                                 ok = false;
@@ -10511,7 +10643,8 @@ fn run_duckbox_query_impl(
                             let _ = unsafe {
                                 let sql_c = CString::new("rollback").unwrap();
                                 let mut tmp_res: duckdb_sys::duckdb_result = std::mem::zeroed();
-                                let rc = duckdb_sys::duckdb_query(con, sql_c.as_ptr(), &mut tmp_res);
+                                let rc =
+                                    duckdb_sys::duckdb_query(con, sql_c.as_ptr(), &mut tmp_res);
                                 duckdb_sys::duckdb_destroy_result(&mut tmp_res);
                                 rc
                             };

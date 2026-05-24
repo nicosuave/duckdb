@@ -7,6 +7,9 @@ import time
 import re
 
 
+PROMPT_RE = r"memory(?:\.[^\r\n ]+)? D ?"
+
+
 def _strip_ansi(s: str) -> str:
     s = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", s)
     s = re.sub(r"\x1b\][^\x07]*\x07", "", s)
@@ -102,8 +105,9 @@ def test_interactive_history_up_arrow_executes_previous(shell, tmp_path):
         _read_until(master_fd, pid, "D ")
         os.write(master_fd, b"\x1b[A")  # Up arrow
         os.write(master_fd, b"\r")
-        out = _strip_ansi(_read_until_re(master_fd, pid, r"(?:\r?\n)42(?:\r?\n)D ?"))
-        assert re.search(r"(?:\r?\n)42(?:\r?\n)D ?", out)
+        pattern = rf"(?:\r?\n)42(?:\r?\n){PROMPT_RE}"
+        out = _strip_ansi(_read_until_re(master_fd, pid, pattern))
+        assert re.search(pattern, out)
         os.write(master_fd, b".quit\r")
     finally:
         try:
@@ -131,8 +135,9 @@ def test_interactive_history_ctrl_p_executes_previous(shell, tmp_path):
         _read_until(master_fd, pid, "D ")
         os.write(master_fd, b"\x10")  # Ctrl-P
         os.write(master_fd, b"\r")
-        out = _strip_ansi(_read_until_re(master_fd, pid, r"(?:\r?\n)42(?:\r?\n)D ?"))
-        assert re.search(r"(?:\r?\n)42(?:\r?\n)D ?", out)
+        pattern = rf"(?:\r?\n)42(?:\r?\n){PROMPT_RE}"
+        out = _strip_ansi(_read_until_re(master_fd, pid, pattern))
+        assert re.search(pattern, out)
         os.write(master_fd, b".quit\r")
     finally:
         try:

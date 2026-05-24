@@ -7,6 +7,9 @@ import time
 import re
 
 
+PROMPT_RE = r"memory(?:\.[^\r\n ]+)? D ?"
+
+
 def _strip_ansi(s: str) -> str:
     s = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", s)
     s = re.sub(r"\x1b\][^\x07]*\x07", "", s)
@@ -64,12 +67,13 @@ def test_interactive_ctrl_u_clears_line(shell, tmp_path):
         os.execvpe(shell, [shell, "-interactive"], env)
 
     try:
-        _read_until_re(master_fd, pid, r"D ?")
+        _read_until_re(master_fd, pid, PROMPT_RE)
         os.write(master_fd, b"select 1")
         os.write(master_fd, b"\x15")  # Ctrl-U
         os.write(master_fd, b"select 2;\r")
-        out = _strip_ansi(_read_until_re(master_fd, pid, r"(?:\r?\n)2(?:\r?\n)D ?"))
-        assert re.search(r"(?:\r?\n)2(?:\r?\n)D ?", out)
+        pattern = rf"(?:\r?\n)2(?:\r?\n){PROMPT_RE}"
+        out = _strip_ansi(_read_until_re(master_fd, pid, pattern))
+        assert re.search(pattern, out)
         os.write(master_fd, b".quit\r")
     finally:
         try:
@@ -93,13 +97,14 @@ def test_interactive_ctrl_k_kills_to_end(shell, tmp_path):
         os.execvpe(shell, [shell, "-interactive"], env)
 
     try:
-        _read_until_re(master_fd, pid, r"D ?")
+        _read_until_re(master_fd, pid, PROMPT_RE)
         os.write(master_fd, b"select 1;garbage")
         os.write(master_fd, b"\x01")  # Ctrl-A
         os.write(master_fd, b"\x0b")  # Ctrl-K
         os.write(master_fd, b"select 3;\r")
-        out = _strip_ansi(_read_until_re(master_fd, pid, r"(?:\r?\n)3(?:\r?\n)D ?"))
-        assert re.search(r"(?:\r?\n)3(?:\r?\n)D ?", out)
+        pattern = rf"(?:\r?\n)3(?:\r?\n){PROMPT_RE}"
+        out = _strip_ansi(_read_until_re(master_fd, pid, pattern))
+        assert re.search(pattern, out)
         os.write(master_fd, b".quit\r")
     finally:
         try:
@@ -109,4 +114,3 @@ def test_interactive_ctrl_k_kills_to_end(shell, tmp_path):
 
 
 # fmt: on
-
