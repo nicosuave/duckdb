@@ -246,6 +246,60 @@ def test_interactive_edit_opens_editor_and_executes(shell, tmp_path):
     assert "edited" in out
 
 
+def test_interactive_edit_escape_alias_opens_editor_and_executes(shell, tmp_path):
+    editor = tmp_path / "duckdb_editor_alias.sh"
+    editor.write_text(
+        "#!/usr/bin/env sh\n"
+        "set -eu\n"
+        "cat >\"$1\" <<'SQL'\n"
+        "select 84 as edited_alias;\n"
+        "SQL\n",
+        encoding="utf-8",
+    )
+    os.chmod(editor, 0o755)
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "xterm-256color"
+    env["COLUMNS"] = "80"
+    env["ROWS"] = "24"
+    env["DUCKDB_EDITOR"] = str(editor)
+
+    out = _pty_run(
+        shell=shell,
+        args=["-interactive", "--init", "/dev/null"],
+        env=env,
+        send_lines=["\\e", ".quit"],
+        send_after=["D ", "D "],
+        timeout_s=20.0,
+    )
+
+    assert "edited_alias" in out
+
+
+def test_interactive_sql_highlighting_emits_ansi(shell, tmp_path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "xterm-256color"
+    env["COLUMNS"] = "80"
+    env["ROWS"] = "24"
+
+    out = _pty_run(
+        shell=shell,
+        args=["-interactive", "--init", "/dev/null"],
+        env=env,
+        send_lines=["select 1 as highlighted;", ".quit"],
+        send_after=["D ", "D "],
+        timeout_s=10.0,
+    )
+
+    assert "\x1b[" in out
+    stripped = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", out)
+    assert "select 1 as highlighted;" in stripped
+
+
 def test_interactive_reverse_search(shell, tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)

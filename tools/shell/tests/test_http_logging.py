@@ -7,7 +7,7 @@ from typing import List
 from conftest import ShellTest
 import os
 
-@pytest.mark.skip(reason="Skip after File Logging rework")
+@pytest.mark.skip(reason="Official DuckDB 1.5.3 deprecates http_logging_output")
 def test_http_logging_file(shell, tmp_path):
     temp_dir = tmp_path / 'http_logging_dir'
     temp_dir.mkdir()

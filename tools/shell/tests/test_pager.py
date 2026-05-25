@@ -1,7 +1,9 @@
 # fmt: off
 
+import os
 import pytest
 from conftest import ShellTest
+from test_interactive_startup import _pty_run
 
 def test_pager_status_default(shell):
     """Test that pager status shows 'automatic' by default"""
@@ -162,5 +164,46 @@ def test_pager_small_data(shell):
     )
     result = test.run()
     result.check_stdout('9')
+
+
+def test_duckbox_automatic_pager_uses_threshold(shell, tmp_path):
+    pager_capture = tmp_path / "pager.out"
+    pager_script = tmp_path / "pager.sh"
+    pager_script.write_text(
+        "#!/usr/bin/env sh\n"
+        "set -eu\n"
+        "cat > \"$DUCKDB_PAGER_CAPTURE\"\n"
+        "printf 'PAGER_USED\\n'\n",
+        encoding="utf-8",
+    )
+    os.chmod(pager_script, 0o755)
+
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "xterm-256color"
+    env["COLUMNS"] = "80"
+    env["ROWS"] = "24"
+    env["DUCKDB_PAGER"] = str(pager_script)
+    env["DUCKDB_PAGER_CAPTURE"] = str(pager_capture)
+
+    out = _pty_run(
+        shell=shell,
+        args=["-interactive", "--init", "/dev/null"],
+        env=env,
+        send_lines=[
+            ".mode duckbox",
+            ".pager set_row_threshold 2",
+            "select i from range(5) t(i);",
+            ".quit",
+        ],
+        send_after=["D ", "D ", "D ", "D "],
+        timeout_s=15.0,
+    )
+
+    assert "PAGER_USED" in out
+    captured = pager_capture.read_text(encoding="utf-8")
+    assert "i" in captured
+    assert "4" in captured
 
 # fmt: on

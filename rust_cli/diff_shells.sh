@@ -37,7 +37,16 @@ tmp_ref="$(mktemp)"
 tmp_rust="$(mktemp)"
 trap 'rm -f "${tmp_ref}" "${tmp_rust}"' EXIT
 
-"${ref_shell}" --batch --init /dev/null <"${sql_file}" >"${tmp_ref}" 2>&1 || true
-DUCKDB_SKIP_LIB_VERSION_CHECK=1 "${rust_shell}" --batch --init /dev/null <"${sql_file}" >"${tmp_rust}" 2>&1 || true
+set +e
+"${ref_shell}" --batch --init /dev/null <"${sql_file}" >"${tmp_ref}" 2>&1
+ref_status=$?
+DUCKDB_SKIP_LIB_VERSION_CHECK=1 "${rust_shell}" --batch --init /dev/null <"${sql_file}" >"${tmp_rust}" 2>&1
+rust_status=$?
+set -e
 
 diff -u "${tmp_ref}" "${tmp_rust}"
+
+if [[ "${ref_status}" -ne "${rust_status}" ]]; then
+  echo "exit status mismatch: ref=${ref_status} rust=${rust_status}" >&2
+  exit 1
+fi

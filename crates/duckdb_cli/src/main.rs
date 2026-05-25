@@ -331,7 +331,14 @@ fn main() {
     }
 
     if state.print_version_and_exit {
-        println!("{}", version_str.trim());
+        if let Some(info) = db::query_version_info(session.con) {
+            println!(
+                "{} ({}) {}",
+                info.library_version, info.codename, info.source_id
+            );
+        } else {
+            println!("{}", version_str.trim());
+        }
         db::close_db(&mut session.db, &mut session.con);
         signals::clear_connection();
         std::process::exit(0);

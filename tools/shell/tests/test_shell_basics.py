@@ -731,6 +731,48 @@ def test_once_temp_file_cleanup(shell, tmp_path):
     result.stdout = open(filepath2, 'rb').read()
     result.check_stdout(b'second')
 
+def test_once_resets_after_single_statement(shell, tmp_path):
+    output_file = tmp_path / "once.out"
+    test = (
+        ShellTest(shell)
+        .statement(f".once {output_file.as_posix()}")
+        .statement("SELECT 42;")
+        .statement("SELECT 99;")
+    )
+    result = test.run()
+    result.check_stdout("99")
+    output = output_file.read_text(encoding="utf-8")
+    assert "42" in output
+    assert "99" not in output
+
+def test_once_bom_writes_utf8_bom(shell, tmp_path):
+    output_file = tmp_path / "once-bom.out"
+    test = (
+        ShellTest(shell)
+        .statement(f".once --bom {output_file.as_posix()}")
+        .statement("SELECT 42;")
+    )
+    result = test.run()
+    assert result.status_code == 0, result.stderr
+    output = output_file.read_bytes()
+    assert output.startswith(b"\xef\xbb\xbf")
+    assert b"42" in output
+
+def test_output_stdout_restores_stdout(shell, tmp_path):
+    output_file = tmp_path / "output.out"
+    test = (
+        ShellTest(shell)
+        .statement(f".output {output_file.as_posix()}")
+        .statement("SELECT 42;")
+        .statement(".output stdout")
+        .statement("SELECT 99;")
+    )
+    result = test.run()
+    result.check_stdout("99")
+    output = output_file.read_text(encoding="utf-8")
+    assert "42" in output
+    assert "99" not in output
+
 @pytest.mark.parametrize("dot_command", [
     ".mode ascii",
     ""
@@ -923,6 +965,31 @@ def test_open(shell, tmp_path):
     result = test.run()
     result.check_stdout('42')
 
+
+def test_open_nofollow_accepts_symlink_like_official(shell, tmp_path):
+    target = tmp_path / "target.db"
+    link = tmp_path / "link.db"
+
+    setup = (
+        ShellTest(shell)
+        .add_argument(target.as_posix())
+        .statement("CREATE TABLE t1 (i INTEGER);")
+        .statement("INSERT INTO t1 VALUES (42);")
+    )
+    setup_result = setup.run()
+    assert setup_result.status_code == 0, setup_result.stderr
+
+    os.symlink(target, link)
+
+    result = (
+        ShellTest(shell)
+        .statement(f".open --nofollow {link.as_posix()}")
+        .statement("SELECT * FROM t1;")
+        .run()
+    )
+    result.check_stdout('42')
+
+
 @pytest.mark.parametrize('generated_file', ["blablabla"], indirect=True)
 def test_open_non_database(shell, generated_file):
     test = (
@@ -1004,8 +1071,7 @@ def test_profiling_optimizer_json(shell):
     result.check_stdout('42')
 
 
-# Original comment: this fails because db_config is missing
-@pytest.mark.skip(reason="db_config is not supported (yet?)")
+@pytest.mark.skip(reason="Official DuckDB 1.5.3 does not support the legacy .eqp command")
 def test_eqp(shell):
     test = (
         ShellTest(shell)
@@ -1368,5 +1434,14 @@ def test_about(shell):
 
     result = test.run()
     result.check_stdout("DuckDB is an in-process analytical database management system designed for fast ")
+
+def test_ui_command_configures_ui_launch(shell, tmp_path):
+    init_file = tmp_path / "duckdbrc"
+    init_file.write_text(".ui_command missing_ui_for_test()\n", encoding="utf-8")
+
+    test = ShellTest(shell, ["-ui", "--init", init_file.as_posix()])
+    result = test.run()
+    assert result.status_code == 1
+    result.check_stderr("missing_ui_for_test")
 
 # fmt: on

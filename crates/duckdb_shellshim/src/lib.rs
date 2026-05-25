@@ -30,6 +30,7 @@ extern "C" {
     pub fn duckdb_shellshim_library_version() -> *const c_char;
     pub fn duckdb_shellshim_release_codename() -> *const c_char;
     pub fn duckdb_shellshim_source_id() -> *const c_char;
+    pub fn duckdb_shellshim_compiler_version() -> *const c_char;
     pub fn duckdb_shellshim_keyword_check(str_: *const c_char, len: usize) -> c_int;
 
     pub fn duckdb_shellshim_echo_slices_from_extracted(

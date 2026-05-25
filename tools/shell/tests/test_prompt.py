@@ -167,4 +167,28 @@ def test_progress_bar_component_validation(shell):
     assert invalid.status_code == 1
     invalid.check_stderr("Unknown bracket type bogus")
 
+
+def test_progress_bar_does_not_print_default_engine_renderer(shell, tmp_path):
+    pid, master_fd = _spawn_interactive(shell, tmp_path)
+
+    try:
+        out = _read_until_re(master_fd, pid, PROMPT_RE)
+        os.write(master_fd, b"PRAGMA threads=1;\r")
+        out += _read_until_re(master_fd, pid, PROMPT_RE)
+        os.write(master_fd, b"PRAGMA progress_bar_time=0;\r")
+        out += _read_until_re(master_fd, pid, PROMPT_RE)
+        os.write(master_fd, b"select sum(i % 97) from range(200000000) t(i);\r")
+        out += _read_until_re(master_fd, pid, r"9599998960", timeout_s=20.0)
+        os.write(master_fd, b".quit\r")
+
+        assert "elapsed" not in out
+        assert "\u2588" not in out
+        assert "\u2595" not in out
+        assert "\u258f" not in out
+    finally:
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+
 # fmt: on

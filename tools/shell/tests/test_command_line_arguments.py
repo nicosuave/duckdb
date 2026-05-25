@@ -59,6 +59,16 @@ def test_version(shell):
     )
     result = test.run()
     result.check_stdout("v")
+    result.check_stdout("(Variegata)")
+    result.check_stdout("14eca11bd9")
+
+
+def test_dot_version(shell):
+    result = ShellTest(shell).statement(".version").run()
+    result.check_stdout("DuckDB v")
+    result.check_stdout("(Variegata)")
+    result.check_stdout("14eca11bd9")
+    assert len([line for line in result.stdout.splitlines() if line.strip()]) >= 2
 
 def test_csv_options(shell):
     test = (

@@ -161,6 +161,12 @@ def test_dump_if_not_exists(shell):
     result.check_stdout('COMMIT')
 
 
+def test_dump_rejects_preserve_rowids(shell):
+    result = ShellTest(shell).statement(".dump --preserve-rowids").run()
+    assert result.status_code == 1
+    result.check_stderr('Unknown option "--preserve-rowids" on ".dump"')
+
+
 def test_dump_schema_semicolons_and_order(shell):
     test = (
         ShellTest(shell)
@@ -196,3 +202,21 @@ def test_dump_schema_semicolons_and_order(shell):
     assert idx_commit != -1
 
     assert idx_schema < idx_create_t < idx_insert_t < idx_create_u < idx_insert_u < idx_view < idx_commit
+
+
+def test_dump_constraint_view_index_and_catalog_omissions(shell):
+    test = (
+        ShellTest(shell)
+        .statement("CREATE SEQUENCE seq START 5;")
+        .statement("CREATE TABLE t(i INTEGER DEFAULT nextval('seq'), j INTEGER CHECK(j > 0));")
+        .statement("CREATE INDEX t_i_idx ON t(i);")
+        .statement("CREATE MACRO add_one(x) AS x + 1;")
+        .statement("CREATE VIEW v AS SELECT add_one(i) AS k FROM t;")
+        .statement(".dump")
+    )
+    result = test.run()
+    result.check_stdout("CHECK((j > 0))")
+    result.check_stdout("CREATE INDEX t_i_idx")
+    result.check_stdout("CREATE VIEW v AS SELECT add_one(i) AS k FROM t")
+    result.check_not_exist("CREATE SEQUENCE")
+    result.check_not_exist("CREATE MACRO")

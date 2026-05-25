@@ -63,12 +63,22 @@ static vector<highlightToken> GetParseTokens(char *buf, size_t len) {
 	string sql(buf, len);
 	vector<highlightToken> tokens;
 #ifndef SHELL_INLINE_AUTOCOMPLETE
-	auto parseTokens = duckdb::Parser::Tokenize(sql);
-	for (auto &token : parseTokens) {
-		highlightToken new_token;
-		new_token.type = convertToken(token.type);
-		new_token.start = token.start;
-		tokens.push_back(new_token);
+	try {
+		auto parseTokens = duckdb::Parser::Tokenize(sql);
+		for (auto &token : parseTokens) {
+			highlightToken new_token;
+			new_token.type = convertToken(token.type);
+			new_token.start = token.start;
+			tokens.push_back(new_token);
+		}
+	} catch (...) {
+		if (!sql.empty()) {
+			highlightToken new_token;
+			new_token.type = tokenType::TOKEN_IDENTIFIER;
+			new_token.start = 0;
+			tokens.push_back(new_token);
+		}
+		return tokens;
 	}
 #endif
 #ifdef SHELL_INLINE_AUTOCOMPLETE

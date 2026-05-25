@@ -32,6 +32,19 @@ int duckdb_shell_sqlite3_complete(const char *zSql) {
 	if (!zSql) {
 		return 0;
 	}
+	const char *trimmed = zSql;
+	while (*trimmed == ' ' || *trimmed == '\r' || *trimmed == '\t' || *trimmed == '\n' || *trimmed == '\f') {
+		trimmed++;
+	}
+	if (trimmed[0] == '\\' && trimmed[1] == 'e') {
+		const char *tail = trimmed + 2;
+		while (*tail == ' ' || *tail == '\r' || *tail == '\t' || *tail == '\n' || *tail == '\f') {
+			tail++;
+		}
+		if (*tail == '\0') {
+			return 1;
+		}
+	}
 	auto state = SQLParseState::NORMAL;
 	for (; *zSql; zSql++) {
 		SQLParseState next_state;
@@ -139,4 +152,3 @@ int duckdb_shell_sqlite3_complete(const char *zSql) {
 }
 
 } // extern "C"
-

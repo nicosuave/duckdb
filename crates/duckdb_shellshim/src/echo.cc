@@ -8,6 +8,9 @@
 
 #include "duckdb.h"
 
+#define DUCKDB_SHELLSHIM_STRINGIFY_IMPL(x) #x
+#define DUCKDB_SHELLSHIM_STRINGIFY(x) DUCKDB_SHELLSHIM_STRINGIFY_IMPL(x)
+
 struct DuckDBShellShimSQLStatementPrefix {
 	void *vptr;
 	uint8_t type;
@@ -24,6 +27,18 @@ struct DuckDBShellShimExtractStatementsWrapper {
 };
 
 extern "C" {
+
+const char *duckdb_shellshim_compiler_version() {
+#if defined(__clang__) && defined(__clang_major__)
+	return "clang-" DUCKDB_SHELLSHIM_STRINGIFY(__clang_major__) "." DUCKDB_SHELLSHIM_STRINGIFY(
+	    __clang_minor__) "." DUCKDB_SHELLSHIM_STRINGIFY(__clang_patchlevel__);
+#elif defined(__GNUC__) && defined(__GNUC_PATCHLEVEL__)
+	return "gcc-" DUCKDB_SHELLSHIM_STRINGIFY(__GNUC__) "." DUCKDB_SHELLSHIM_STRINGIFY(
+	    __GNUC_MINOR__) "." DUCKDB_SHELLSHIM_STRINGIFY(__GNUC_PATCHLEVEL__);
+#else
+	return "";
+#endif
+}
 
 static bool duckdb_shellshim_is_space(char c) {
 	return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\f' || c == '\v';

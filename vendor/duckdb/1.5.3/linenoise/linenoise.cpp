@@ -23,7 +23,15 @@
 #include <sys/time.h>
 #endif
 
-#if defined(LINENOISE_EDITOR) && !defined(DUCKDB_RUST_CLI_DISABLE_LINENOISE_EDITOR)
+#ifndef DUCKDB_RUST_CLI_USE_RUST_EDITOR
+#if defined(DUCKDB_RUST_CLI_DISABLE_LINENOISE_EDITOR)
+#define DUCKDB_RUST_CLI_USE_RUST_EDITOR 1
+#else
+#define DUCKDB_RUST_CLI_USE_RUST_EDITOR 0
+#endif
+#endif
+
+#if defined(LINENOISE_EDITOR) && !DUCKDB_RUST_CLI_USE_RUST_EDITOR
 #if defined(WIN32) || defined(__CYGWIN__)
 #define DEFAULT_EDITOR "notepad.exe"
 #else
@@ -1478,7 +1486,7 @@ int Linenoise::Edit() {
 		case CTRL_G:
 		case CTRL_J:
 		case ENTER: { /* enter */
-#if defined(LINENOISE_EDITOR) && !defined(DUCKDB_RUST_CLI_DISABLE_LINENOISE_EDITOR)
+#if defined(LINENOISE_EDITOR) && !DUCKDB_RUST_CLI_USE_RUST_EDITOR
 			if (len > 0) {
 				// check if this contains ".edit"
 
@@ -1802,7 +1810,7 @@ void Linenoise::LogTokens(const vector<highlightToken> &tokens) {
 #endif
 }
 
-#if defined(LINENOISE_EDITOR) && !defined(DUCKDB_RUST_CLI_DISABLE_LINENOISE_EDITOR)
+#if defined(LINENOISE_EDITOR) && !DUCKDB_RUST_CLI_USE_RUST_EDITOR
 // .edit functionality - code adopted from psql
 
 bool Linenoise::EditFileWithEditor(const string &file_name, const char *editor) {

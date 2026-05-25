@@ -219,7 +219,7 @@ pub fn enable_console_progress_bar(state: &ShellState, con: duckdb_sys::duckdb_c
         return;
     }
     let _ = run_sql_quiet(con, "PRAGMA enable_progress_bar");
-    let _ = run_sql_quiet(con, "PRAGMA enable_print_progress_bar");
+    let _ = run_sql_quiet(con, "PRAGMA disable_print_progress_bar");
 }
 
 fn run_sql_quiet(con: duckdb_sys::duckdb_connection, sql: &str) -> bool {

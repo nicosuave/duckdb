@@ -1952,3 +1952,29 @@ static HIGHLIGHT_COLOR_INFO: &[HighlightColorInfo] = &[
         b: 0xEE,
     },
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn display_colors_sort_by_shell_color_groups() {
+        let out = render_display_colors(PrintIntensity::Standard, false);
+        let red_pos = out.find("red ").unwrap();
+        let orange_pos = out.find("orange").unwrap();
+        let yellow_pos = out.find("yellow ").unwrap();
+        assert!(red_pos < orange_pos);
+        assert!(orange_pos < yellow_pos);
+    }
+
+    #[test]
+    fn black_uses_extended_ansi_code_like_shell() {
+        let out = render_display_colors(PrintIntensity::Standard, true);
+        assert!(out.contains("\x1b[38;5;0mblack\x1b[00m"));
+    }
+
+    #[test]
+    fn highlight_color_lookup_is_case_insensitive() {
+        assert_eq!(try_get_highlight_color_code("DarkOrange").unwrap(), 208);
+    }
+}

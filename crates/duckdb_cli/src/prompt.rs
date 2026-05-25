@@ -611,3 +611,34 @@ pub fn render_main_prompt(state: &ShellState, con: duckdb_sys::duckdb_connection
         Err(_) => state.mainPrompt.clone(),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn prompt_rejects_progress_only_settings() {
+        let err = validate_prompt_spec("{setting:progress_bar}").unwrap_err();
+        assert!(err.contains("unsupported setting"));
+    }
+
+    #[test]
+    fn progress_bar_accepts_progress_settings_and_controls() {
+        validate_progress_bar_spec(
+            "{setting:progress_bar_percentage} {align:right}{setting:eta}",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn progress_bar_rejects_bad_alignment() {
+        let err = validate_progress_bar_spec("{content_align:center}{setting:eta}").unwrap_err();
+        assert!(err.contains("Unsupported type center for content_align"));
+    }
+
+    #[test]
+    fn prompt_reports_unterminated_bracket() {
+        let err = validate_prompt_spec("{setting:current_database").unwrap_err();
+        assert!(err.contains("unterminated bracket or escape"));
+    }
+}

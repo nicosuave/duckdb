@@ -509,3 +509,29 @@ pub fn format_value(value: &str, max_rows: usize, max_width: usize) -> Option<St
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn formats_nested_object_with_null_value() {
+        let formatted = format_value(r#"{"a":1,"b":[null,{"c":"x"}]}"#, 20, 80).unwrap();
+        assert!(formatted.contains("\"a\": 1"));
+        assert!(formatted.contains("null"));
+        assert!(formatted.contains("\"c\": \"x\""));
+    }
+
+    #[test]
+    fn returns_none_for_invalid_or_scalar_values() {
+        assert!(format_value("not json", 20, 80).is_none());
+        assert!(format_value(r#""string""#, 20, 80).is_none());
+        assert!(format_value(r#"{"unterminated": [1, 2]"#, 20, 80).is_none());
+    }
+
+    #[test]
+    fn respects_row_limit() {
+        let value = r#"{"a":[{"b":1},{"c":2},{"d":3}]}"#;
+        assert!(format_value(value, 1, 12).is_none());
+    }
+}

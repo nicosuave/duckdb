@@ -1771,33 +1771,6 @@ fn sql_escape_single_quotes(s: &str) -> String {
     s.replace('\'', "''")
 }
 
-fn sql_identifier_qualified(state: &ShellState, name: &str) -> String {
-    // Minimal quoting for "schema.table" as used by `.tables`/`.import` paths.
-    let parts: Vec<&str> = name.split('.').collect();
-    if parts.len() <= 1 {
-        return quote_identifier_if_needed(state, name);
-    }
-    let mut out = String::new();
-    for (idx, part) in parts.iter().enumerate() {
-        if idx > 0 {
-            out.push('.');
-        }
-        out.push_str(&quote_identifier_if_needed(state, part));
-    }
-    out
-}
-
-fn sql_qualified_identifier(state: &ShellState, schema: &str, name: &str) -> String {
-    if schema.is_empty() {
-        return quote_identifier_if_needed(state, name);
-    }
-    format!(
-        "{}.{}",
-        quote_identifier_if_needed(state, schema),
-        quote_identifier_if_needed(state, name)
-    )
-}
-
 #[allow(dead_code)]
 fn csv_needs_quote(value: &[u8], col_sep: &[u8]) -> bool {
     if col_sep.is_empty() {
@@ -2912,6 +2885,13 @@ ORDER BY columns.database_name, columns.schema_name, columns.table_name, columns
                         info.library_version, info.codename, info.source_id
                     ),
                 );
+                let compiler = unsafe { shellshim::duckdb_shellshim_compiler_version() };
+                if !compiler.is_null() {
+                    let compiler = unsafe { CStr::from_ptr(compiler) }.to_string_lossy();
+                    if !compiler.trim().is_empty() {
+                        print_stdout(state, &format!("{}\n", compiler.trim()));
+                    }
+                }
             } else {
                 let version = unsafe { duckdb_sys::duckdb_library_version() };
                 let version = if version.is_null() {
@@ -2925,8 +2905,18 @@ ORDER BY columns.database_name, columns.schema_name, columns.table_name, columns
             }
             0
         }
-        crate::dotcmd::DotCommandId::Multiline => 0,
-        crate::dotcmd::DotCommandId::Singleline => 0,
+        crate::dotcmd::DotCommandId::Multiline => {
+            if state.rl_version == ReadLineVersion::Linenoise {
+                unsafe { duckdb_linenoise::linenoiseSetMultiLine(1) };
+            }
+            0
+        }
+        crate::dotcmd::DotCommandId::Singleline => {
+            if state.rl_version == ReadLineVersion::Linenoise {
+                unsafe { duckdb_linenoise::linenoiseSetMultiLine(0) };
+            }
+            0
+        }
         crate::dotcmd::DotCommandId::Schema => {
             fn schema_indent_sql(sql: &str) -> String {
                 const WRAP_THRESHOLD: usize = 80;
@@ -3264,12 +3254,12 @@ ORDER BY columns.database_name, columns.schema_name, columns.table_name, columns
                 generic_parameters.push(("ignore_errors".to_string(), "true".to_string()));
             }
 
-            let table_ident = sql_identifier_qualified(state, &table_name);
+            let table_ident = quote_identifier_if_needed(state, &table_name);
             let file_lit = format!("'{}'", sql_escape_single_quotes(&file_name));
 
             let exists_sql = format!(
 					"SELECT 1 FROM information_schema.tables WHERE table_schema='main' AND table_name='{}' LIMIT 1",
-					sql_escape_single_quotes(table_name.split('.').last().unwrap_or(&table_name))
+					sql_escape_single_quotes(&table_name)
 				);
             let Ok(exists_q) = CString::new(exists_sql) else {
                 return 1;
@@ -3352,13 +3342,11 @@ ORDER BY columns.database_name, columns.schema_name, columns.table_name, columns
             // Dump implementation based on sqlite_schema for DDL + duckdb_tables() for data and schema discovery.
             // Matches v1.4.3 tests: emits CREATE SCHEMA IF NOT EXISTS for non-main schemas and schema-qualified INSERTs.
             let mut dump_newlines = false;
-            let mut _preserve_rowids = false;
             let mut patterns: Vec<&str> = Vec::new();
             for arg in args.iter().skip(1) {
                 if arg.starts_with("--") {
                     match arg.as_str() {
                         "--newlines" => dump_newlines = true,
-                        "--preserve-rowids" => _preserve_rowids = true,
                         other => {
                             print_database_error(&format!(
                                 "Unknown option \"{}\" on \".dump\"",
@@ -8494,11 +8482,21 @@ fn render_duckbox_result(
     } else {
         state.pager_command.clone()
     };
-    let use_pager = state.stdout_is_console
+    let pager_context = state.stdout_is_console
         && state.stdin_is_interactive
         && state.outfile.is_empty()
-        && matches!(&state.out, OutputHandle::Stdout)
-        && state.pager_mode == PagerMode::On;
+        && matches!(&state.out, OutputHandle::Stdout);
+    let use_pager = pager_context
+        && match state.pager_mode {
+            PagerMode::Off => false,
+            PagerMode::On => true,
+            PagerMode::Automatic => {
+                let triggers_rows = (row_count as u64) >= state.pager_min_rows;
+                let triggers_cols = state.pager_min_cols > 0
+                    && (compute_total_render_length(&col_width) as u64) > state.pager_min_cols;
+                triggers_rows || triggers_cols
+            }
+        };
 
     let mut writer = DuckboxWriter::new(&mut state.out, &pager_cmd, use_pager);
 
