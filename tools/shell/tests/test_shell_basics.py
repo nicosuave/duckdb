@@ -1444,4 +1444,25 @@ def test_ui_command_configures_ui_launch(shell, tmp_path):
     assert result.status_code == 1
     result.check_stderr("missing_ui_for_test")
 
+
+def test_ui_command_start_ui_server_smoke(shell, tmp_path):
+    if os.environ.get("DUCKDB_UI_SMOKE") != "1":
+        pytest.skip("requires DUCKDB_UI_SMOKE=1 and downloadable ui extension")
+
+    init_file = tmp_path / "duckdbrc"
+    init_file.write_text(
+        "install ui;\n"
+        "load ui;\n"
+        ".ui_command start_ui_server()\n",
+        encoding="utf-8",
+    )
+
+    result = (
+        ShellTest(shell, ["-ui", "--init", init_file.as_posix()])
+        .env_var("HOME", str(tmp_path))
+        .run()
+    )
+    assert result.status_code == 0, result.stderr
+    result.check_stdout("UI server started at http://localhost:")
+
 # fmt: on

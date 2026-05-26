@@ -182,6 +182,8 @@ pub struct ShellState {
     pub render_completion: bool,
     pub render_errors: bool,
     pub highlight_mode: HighlightMode,
+    #[cfg(target_os = "windows")]
+    pub win_utf8_mode: bool,
 
     pub mainPrompt: String,
     pub continuePrompt: String,
@@ -290,6 +292,8 @@ impl ShellState {
             render_completion: true,
             render_errors: true,
             highlight_mode: HighlightMode::Automatic,
+            #[cfg(target_os = "windows")]
+            win_utf8_mode: false,
             mainPrompt:
                 "{max_length:40}{highlight_element:prompt}{setting:current_database_and_schema}{color:reset} D "
                     .to_string(),

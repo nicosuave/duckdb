@@ -53,4 +53,13 @@ extern "C" {
     // DuckDB CLI helper: best-effort terminal background color detection.
     // Returns 0=unknown, 1=dark, 2=light, 3=mixed.
     pub fn duckdb_cli_get_terminal_color_mode() -> c_int;
+
+    pub fn duckdb_cli_linenoise_set_highlighting(enabled: c_int);
+    pub fn duckdb_cli_linenoise_set_highlight_color(
+        element: *const c_char,
+        color: u16,
+        intensity: c_int,
+        user_configured: c_int,
+    ) -> c_int;
+    pub fn duckdb_cli_linenoise_apply_highlight_mode(mode: c_int);
 }

@@ -62,6 +62,8 @@ pub enum DotCommandId {
     ThousandSep,
     Timer,
     UiCommand,
+    #[cfg(target_os = "windows")]
+    Utf8,
     Version,
     Width,
 }
@@ -515,6 +517,14 @@ pub const METADATA_COMMANDS: &[DotCommandSpec] = &[
         usage: "[command]",
         id: DotCommandId::UiCommand,
     },
+    #[cfg(target_os = "windows")]
+    DotCommandSpec {
+        command: "utf8",
+        argument_count: 1,
+        match_size: 0,
+        usage: "",
+        id: DotCommandId::Utf8,
+    },
     DotCommandSpec {
         command: "version",
         argument_count: 1,
@@ -596,6 +606,8 @@ pub const METADATA_COMMAND_NAMES: &[&str] = &[
     "thousand_sep",
     "timer",
     "ui_command",
+    #[cfg(target_os = "windows")]
+    "utf8",
     "version",
     "width",
 ];
@@ -699,6 +711,8 @@ pub fn help_summary(id: DotCommandId) -> &'static str {
 		DotCommandId::ThousandSep => "Sets the thousand separator used when rendering numbers. Only for duckbox mode.",
 		DotCommandId::Timer => "Turn SQL timer on or off",
 		DotCommandId::UiCommand => "Set the UI command",
+        #[cfg(target_os = "windows")]
+        DotCommandId::Utf8 => "Enable experimental UTF-8 console output mode",
 		DotCommandId::Version => "Show the version",
 		DotCommandId::Width => "Set minimum column widths for columnar output",
 	}

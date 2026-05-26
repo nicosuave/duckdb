@@ -34,14 +34,10 @@ impl OutputHandle {
     }
 }
 
-fn home_dir() -> Option<String> {
-    std::env::var("HOME").ok().filter(|s| !s.is_empty())
-}
-
 fn expand_path(path: &str) -> String {
     let path = path.trim();
     if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = home_dir() {
+        if let Some(home) = crate::paths::home_dir() {
             return format!("{}/{}", home, rest);
         }
     }
@@ -54,7 +50,19 @@ fn tmp_dir() -> String {
         .filter(|s| !s.trim().is_empty())
         .or_else(|| std::env::var("TMP").ok().filter(|s| !s.trim().is_empty()))
         .or_else(|| std::env::var("TEMP").ok().filter(|s| !s.trim().is_empty()))
-        .unwrap_or_else(|| "/tmp".to_string())
+        .unwrap_or_else(|| std::env::temp_dir().to_string_lossy().into_owned())
+}
+
+pub fn shell_command(cmd: &str) -> Command {
+    if cfg!(target_os = "windows") {
+        let mut command = Command::new("cmd");
+        command.arg("/C").arg(cmd);
+        command
+    } else {
+        let mut command = Command::new("sh");
+        command.arg("-c").arg(cmd);
+        command
+    }
 }
 
 pub fn new_temp_file_path(suffix: &str) -> String {
@@ -79,16 +87,26 @@ pub fn reset_output(state: &mut ShellState) {
     } else {
         state.out = OutputHandle::Stdout;
         if state.doXdgOpen && !state.zTempFile.is_empty() {
-            let opener = if cfg!(target_os = "macos") {
-                "open"
-            } else if cfg!(target_os = "linux") {
-                "xdg-open"
-            } else {
-                ""
-            };
-            if !opener.is_empty() {
-                let _ = Command::new(opener).arg(&state.zTempFile).status();
+            if cfg!(target_os = "windows") {
+                let _ = Command::new("cmd")
+                    .arg("/C")
+                    .arg("start")
+                    .arg("")
+                    .arg(&state.zTempFile)
+                    .status();
                 std::thread::sleep(Duration::from_millis(2000));
+            } else {
+                let opener = if cfg!(target_os = "macos") {
+                    "open"
+                } else if cfg!(target_os = "linux") {
+                    "xdg-open"
+                } else {
+                    ""
+                };
+                if !opener.is_empty() {
+                    let _ = Command::new(opener).arg(&state.zTempFile).status();
+                    std::thread::sleep(Duration::from_millis(2000));
+                }
             }
             pop_output_mode(state);
             state.doXdgOpen = false;
@@ -113,9 +131,7 @@ pub fn pop_output_mode(state: &mut ShellState) {
 }
 
 pub fn open_pipe(state: &mut ShellState, cmd: &str) -> Result<(), String> {
-    let child = Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
+    let child = shell_command(cmd)
         .stdin(Stdio::piped())
         .spawn()
         .map_err(|_| format!("Error: cannot open pipe \"{}\"", cmd))?;

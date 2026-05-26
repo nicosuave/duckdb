@@ -51,13 +51,10 @@ fn choose_extension_directory_base() -> Option<PathBuf> {
         }
     }
 
-    if let Ok(home) = std::env::var("HOME") {
-        let home = home.trim().to_string();
-        if !home.is_empty() {
-            let p = PathBuf::from(home).join(".duckdb").join("extensions");
-            if try_create_dir_all(&p) && try_write_probe_file(&p) {
-                return Some(p);
-            }
+    if let Some(home) = crate::paths::home_dir() {
+        let p = PathBuf::from(home).join(".duckdb").join("extensions");
+        if try_create_dir_all(&p) && try_write_probe_file(&p) {
+            return Some(p);
         }
     }
 

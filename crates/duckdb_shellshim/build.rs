@@ -5,13 +5,14 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=src/echo.cc");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
+    println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_ENV");
+    println!("cargo:rerun-if-env-changed=CXX");
+    println!("cargo:rerun-if-env-changed=AR");
     println!("cargo:rerun-if-env-changed=DUCKDB_INCLUDE_DIR");
     println!("cargo:rerun-if-env-changed=DUCKDB_VENDOR_VERSION");
     println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
-    let echo_obj_path = out_dir.join("echo.o");
-    let lib_path = out_dir.join("libduckdb_shellshim.a");
 
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
@@ -22,20 +23,45 @@ fn main() {
         .unwrap_or_else(|| workspace_root.join(format!("vendor/duckdb/{vendor_version}/include")));
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
+    let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
+    let is_msvc = target_os == "windows" && target_env == "msvc";
     let deployment_target = env::var("MACOSX_DEPLOYMENT_TARGET").ok();
+    let echo_obj_path = out_dir.join(if is_msvc { "echo.obj" } else { "echo.o" });
+    let lib_path = out_dir.join(if is_msvc {
+        "duckdb_shellshim.lib"
+    } else {
+        "libduckdb_shellshim.a"
+    });
 
     let compile = |src: &str, obj: &PathBuf| {
-        let mut cxx = Command::new("c++");
-        cxx.arg("-std=c++17").arg(format!("-I{}", duckdb_include.display()));
-        if target_os == "macos" {
-            if let Some(target) = deployment_target.as_deref() {
-                cxx.arg(format!("-mmacosx-version-min={}", target));
+        let cxx_bin = env::var("CXX").unwrap_or_else(|_| {
+            if is_msvc {
+                "cl".to_string()
+            } else {
+                "c++".to_string()
             }
+        });
+        let mut cxx = Command::new(cxx_bin);
+        if is_msvc {
+            cxx.arg("/std:c++17")
+                .arg("/EHsc")
+                .arg(format!("/I{}", duckdb_include.display()))
+                .arg("/c")
+                .arg(src)
+                .arg(format!("/Fo{}", obj.display()));
+        } else {
+            cxx.arg("-std=c++17")
+                .arg(format!("-I{}", duckdb_include.display()));
+            if target_os == "macos" {
+                if let Some(target) = deployment_target.as_deref() {
+                    cxx.arg(format!("-mmacosx-version-min={}", target));
+                }
+            }
+            if target_os == "linux" || target_os == "windows" {
+                cxx.arg("-fPIC");
+            }
+            cxx.arg("-c").arg(src).arg("-o").arg(obj);
         }
-        if target_os == "linux" {
-            cxx.arg("-fPIC");
-        }
-        cxx.arg("-c").arg(src).arg("-o").arg(obj);
         let status = cxx.status().expect("failed to invoke c++");
         if !status.success() {
             panic!("c++ failed with status {status}");
@@ -44,12 +70,21 @@ fn main() {
 
     compile("src/echo.cc", &echo_obj_path);
 
-    let status = Command::new("ar")
-        .arg("crus")
-        .arg(&lib_path)
-        .arg(&echo_obj_path)
-        .status()
-        .expect("failed to invoke ar");
+    let ar_bin = env::var("AR").unwrap_or_else(|_| {
+        if is_msvc {
+            "lib".to_string()
+        } else {
+            "ar".to_string()
+        }
+    });
+    let mut ar = Command::new(ar_bin);
+    if is_msvc {
+        ar.arg(format!("/OUT:{}", lib_path.display()))
+            .arg(&echo_obj_path);
+    } else {
+        ar.arg("crus").arg(&lib_path).arg(&echo_obj_path);
+    }
+    let status = ar.status().expect("failed to invoke ar");
     if !status.success() {
         panic!("ar failed with status {status}");
     }
@@ -61,6 +96,8 @@ fn main() {
         // Rust links with `cc`, so we must explicitly link the C++ stdlib when we ship C++ objects.
         "macos" => println!("cargo:rustc-link-lib=c++"),
         "linux" => println!("cargo:rustc-link-lib=stdc++"),
+        "windows" if target_env == "msvc" => {}
+        "windows" => println!("cargo:rustc-link-lib=stdc++"),
         other => panic!("unsupported target OS: {other}"),
     }
 }

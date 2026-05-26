@@ -300,6 +300,52 @@ def test_interactive_sql_highlighting_emits_ansi(shell, tmp_path):
     assert "select 1 as highlighted;" in stripped
 
 
+def test_interactive_highlight_colors_update_sql_editor(shell, tmp_path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "xterm-256color"
+    env["COLUMNS"] = "80"
+    env["ROWS"] = "24"
+
+    out = _pty_run(
+        shell=shell,
+        args=["-interactive", "--init", "/dev/null"],
+        env=env,
+        send_lines=[".highlight_colors keyword red", "select 123 as v;", ".quit"],
+        send_after=["D ", "D ", "D "],
+        timeout_s=10.0,
+    )
+
+    assert "\x1b[31mselect " in out
+    assert "\x1b[31mas " in out
+    stripped = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", out)
+    assert "select 123 as v;" in stripped
+
+
+def test_interactive_highlight_off_disables_sql_editor_highlighting(shell, tmp_path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "xterm-256color"
+    env["COLUMNS"] = "80"
+    env["ROWS"] = "24"
+
+    out = _pty_run(
+        shell=shell,
+        args=["-interactive", "--init", "/dev/null"],
+        env=env,
+        send_lines=[".highlight off", "select 123 as v;", ".quit"],
+        send_after=["D ", "D ", "D "],
+        timeout_s=10.0,
+    )
+
+    stripped = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", out)
+    assert "D select 123 as v;" in stripped
+    assert not re.search(r"(?:\x1b\[[0-9;]*m)+select ", out)
+    assert not re.search(r"(?:\x1b\[[0-9;]*m)+as ", out)
+
+
 def test_interactive_reverse_search(shell, tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)

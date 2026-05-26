@@ -3,6 +3,7 @@
 import pytest
 import subprocess
 import sys
+import re
 from typing import List
 from conftest import ShellTest
 import os
@@ -31,6 +32,37 @@ def test_custom_highlight(shell):
     result = test.run()
     result.check_stdout('\x1b[1m\x1b[31ml_comment\x1b[00m')
     result.check_stdout('\x1b[33mvarchar\x1b[00m')
+
+@pytest.mark.skipif(os.name == 'nt', reason="Windows highlighting does not use shell escapes")
+def test_nested_duckbox_value_highlight(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".mode duckbox")
+        .statement(".maxwidth 120")
+        .statement(".highlight_results on")
+        .statement(".highlight_colors string_constant red")
+        .statement(".highlight_colors null_value blue")
+        .statement("select {'a': 'x', 'b': null, 'c': ['y', null]} as s")
+    )
+    result = test.run()
+    result.check_stdout("\x1b[31m'a'\x1b[00m")
+    result.check_stdout("\x1b[31m'b'\x1b[00m")
+    result.check_stdout("\x1b[34mNULL\x1b[00m")
+
+
+@pytest.mark.skipif(os.name == 'nt', reason="Windows highlighting does not use shell escapes")
+def test_custom_layout_and_footer_highlight(shell):
+    test = (
+        ShellTest(shell)
+        .statement(".highlight_results on")
+        .statement(".highlight_colors layout red")
+        .statement(".highlight_colors footer blue")
+        .statement("select 42 as answer where false")
+    )
+    result = test.run()
+    result.check_stdout("\x1b[31m┌")
+    assert re.search(r"\x1b\[34m\s*0 rows", result.stdout)
+
 
 def test_custom_highlight_error(shell):
     test = (

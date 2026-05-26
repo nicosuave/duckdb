@@ -3,17 +3,13 @@ use std::io::{Read, Write};
 
 pub const MAX_HISTORY_LINES: usize = 2000;
 
-fn home_dir() -> Option<String> {
-    std::env::var("HOME").ok().filter(|s| !s.is_empty())
-}
-
 pub fn history_path() -> Option<String> {
     if let Ok(path) = std::env::var("DUCKDB_HISTORY") {
         if !path.is_empty() {
             return Some(path);
         }
     }
-    home_dir().map(|home| format!("{}/.duckdb_history", home))
+    crate::paths::home_dir().map(|home| format!("{}/.duckdb_history", home))
 }
 
 #[allow(dead_code)]

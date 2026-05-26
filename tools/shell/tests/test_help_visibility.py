@@ -1,5 +1,7 @@
 # fmt: off
 
+import os
+import pytest
 from conftest import ShellTest
 
 
@@ -43,3 +45,15 @@ def test_check_is_unknown_command(shell):
     assert result.status_code == 1
     result.check_stderr("Unknown Command Error")
     assert "unsupported" not in result.stderr.lower()
+
+
+def test_utf8_command_hidden_on_non_windows(shell):
+    if os.name == "nt":
+        pytest.skip(".utf8 is a Windows-only shell command")
+
+    result = ShellTest(shell).statement(".help").run()
+    assert ".utf8" not in result.stdout
+
+    result = ShellTest(shell).statement(".utf8").run()
+    assert result.status_code == 1
+    result.check_stderr("Unknown Command Error")

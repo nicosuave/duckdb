@@ -1,10 +1,11 @@
 use std::env;
 use std::path::{Path, PathBuf};
 
-fn candidate_lib_name(target_os: &str) -> &'static str {
+fn candidate_lib_names(target_os: &str) -> &'static [&'static str] {
     match target_os {
-        "macos" => "libduckdb.dylib",
-        "linux" => "libduckdb.so",
+        "macos" => &["libduckdb.dylib"],
+        "linux" => &["libduckdb.so"],
+        "windows" => &["duckdb.lib", "libduckdb.dll.a", "duckdb.dll"],
         other => panic!("unsupported target OS: {other}"),
     }
 }
@@ -22,7 +23,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
-    let lib_name = candidate_lib_name(&target_os);
+    let lib_names = candidate_lib_names(&target_os);
     let vendor_version = env::var("DUCKDB_VENDOR_VERSION").unwrap_or_else(|_| "1.5.3".to_string());
     let lib_source = env::var("DUCKDB_LIB_SOURCE").unwrap_or_else(|_| "vendor".to_string());
 
@@ -45,6 +46,7 @@ fn main() {
         match target_os.as_str() {
             "macos" => "darwin",
             "linux" => "linux",
+            "windows" => "windows",
             _ => unreachable!(),
         }
     ));
@@ -67,17 +69,22 @@ fn main() {
     }
 
     for dir in &lib_dirs {
-        println!("cargo:rerun-if-changed={}", dir.join(lib_name).display());
+        for lib_name in lib_names {
+            println!("cargo:rerun-if-changed={}", dir.join(lib_name).display());
+        }
     }
 
     let found_dir = lib_dirs
         .iter()
-        .find(|dir| existing_file(&dir.join(lib_name)))
+        .find(|dir| {
+            lib_names
+                .iter()
+                .any(|lib_name| existing_file(&dir.join(lib_name)))
+        })
         .cloned();
 
     if let Some(found_dir) = found_dir {
         println!("cargo:rustc-link-search=native={}", found_dir.display());
-        println!("cargo:rustc-link-arg=-Wl,-rpath,{}", found_dir.display());
         println!("cargo:rustc-link-lib=dylib=duckdb");
 
         // Portable runtime lookup for distributable artifacts:
@@ -85,17 +92,22 @@ fn main() {
         // - Linux: look next to the executable (or ../lib) via $ORIGIN.
         match target_os.as_str() {
             "macos" => {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", found_dir.display());
                 println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
                 println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../lib");
             }
             "linux" => {
+                println!("cargo:rustc-link-arg=-Wl,-rpath,{}", found_dir.display());
                 println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN");
                 println!("cargo:rustc-link-arg=-Wl,-rpath,$ORIGIN/../lib");
             }
             _ => {}
         }
     } else {
-        println!("cargo:warning=could not find libduckdb for linking (expected {lib_name})");
-        println!("cargo:warning=set DUCKDB_LIB_DIR to the directory containing libduckdb");
+        println!(
+            "cargo:warning=could not find libduckdb for linking (expected one of {})",
+            lib_names.join(", ")
+        );
+        println!("cargo:warning=set DUCKDB_LIB_DIR to the directory containing the DuckDB library");
     }
 }

@@ -9,7 +9,7 @@ use std::borrow::Cow;
 use std::ffi::{CStr, CString};
 use std::io::Read;
 use std::io::Write;
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
 fn shell_string_is_null_literal(inner: &str) -> bool {
     inner.trim().eq_ignore_ascii_case("null")
@@ -506,7 +506,29 @@ fn get_system_pager() -> String {
         .ok()
         .filter(|s| !s.trim().is_empty())
         .or_else(|| std::env::var("PAGER").ok().filter(|s| !s.trim().is_empty()))
-        .unwrap_or_else(|| "less -SRX".to_string())
+        .unwrap_or_else(|| {
+            if cfg!(target_os = "windows") {
+                "more".to_string()
+            } else {
+                "less -SRX".to_string()
+            }
+        })
+}
+
+#[cfg(target_os = "windows")]
+fn enable_windows_utf8_console(state: &mut ShellState) {
+    const CP_UTF8: u32 = 65001;
+
+    extern "system" {
+        fn SetConsoleCP(w_code_page_id: u32) -> i32;
+        fn SetConsoleOutputCP(w_code_page_id: u32) -> i32;
+    }
+
+    state.win_utf8_mode = true;
+    unsafe {
+        let _ = SetConsoleCP(CP_UTF8);
+        let _ = SetConsoleOutputCP(CP_UTF8);
+    }
 }
 
 fn page_or_print_stdout(state: &mut ShellState, bytes: &[u8]) {
@@ -553,9 +575,7 @@ fn page_or_print_stdout(state: &mut ShellState, bytes: &[u8]) {
         state.pager_command.clone()
     };
 
-    let mut child = match Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
+    let mut child = match crate::output::shell_command(&cmd)
         .stdin(Stdio::piped())
         .spawn()
     {
@@ -595,9 +615,7 @@ fn page_or_print_stdout_rows_only(state: &mut ShellState, bytes: &[u8]) {
         state.pager_command.clone()
     };
 
-    let mut child = match Command::new("sh")
-        .arg("-c")
-        .arg(cmd)
+    let mut child = match crate::output::shell_command(&cmd)
         .stdin(Stdio::piped())
         .spawn()
     {
@@ -828,6 +846,140 @@ fn reset_terminal_code() -> &'static str {
     "\x1b[00m"
 }
 
+fn highlight_style_for_element(state: &ShellState, element: &str) -> HighlightStyle {
+    if let Some(style) = state.highlight_styles.get(element) {
+        return *style;
+    }
+    match element {
+        "error" => state.highlight_style_error,
+        "keyword" => match state.highlight_mode {
+            HighlightMode::Dark => HighlightStyle {
+                color: PrintColor::Extended(33),
+                intensity: PrintIntensity::Bold,
+            },
+            HighlightMode::Light => HighlightStyle {
+                color: PrintColor::Extended(27),
+                intensity: PrintIntensity::Bold,
+            },
+            _ => HighlightStyle {
+                color: PrintColor::Green,
+                intensity: PrintIntensity::Standard,
+            },
+        },
+        "numeric_constant" => match state.highlight_mode {
+            HighlightMode::Dark => HighlightStyle {
+                color: PrintColor::Extended(212),
+                intensity: PrintIntensity::Standard,
+            },
+            HighlightMode::Light => HighlightStyle {
+                color: PrintColor::Extended(90),
+                intensity: PrintIntensity::Standard,
+            },
+            _ => HighlightStyle {
+                color: PrintColor::Yellow,
+                intensity: PrintIntensity::Standard,
+            },
+        },
+        "string_constant" => match state.highlight_mode {
+            HighlightMode::Dark => HighlightStyle {
+                color: PrintColor::Extended(220),
+                intensity: PrintIntensity::Standard,
+            },
+            HighlightMode::Light => HighlightStyle {
+                color: PrintColor::Extended(58),
+                intensity: PrintIntensity::Standard,
+            },
+            _ => HighlightStyle {
+                color: PrintColor::Yellow,
+                intensity: PrintIntensity::Standard,
+            },
+        },
+        "line_indicator" | "table_name" => HighlightStyle {
+            color: PrintColor::Standard,
+            intensity: PrintIntensity::Bold,
+        },
+        "database_name" | "suggestion_catalog_name" => HighlightStyle {
+            color: PrintColor::Extended(172),
+            intensity: PrintIntensity::Standard,
+        },
+        "schema_name" | "suggestion_schema_name" => HighlightStyle {
+            color: PrintColor::Extended(39),
+            intensity: PrintIntensity::Standard,
+        },
+        "column_name"
+        | "suggestion_table_name"
+        | "suggestion_column_name"
+        | "suggestion_file_name"
+        | "suggestion_function_name"
+        | "suggestion_setting_name"
+        | "view_layout"
+        | "startup_version"
+        | "numeric_value"
+        | "string_value"
+        | "temporal_value"
+        | "footer"
+        | "none" => HighlightStyle {
+            color: PrintColor::Standard,
+            intensity: PrintIntensity::Standard,
+        },
+        "column_type" | "null_value" | "layout" | "startup_text" | "continuation" | "comment"
+        | "table_layout" => HighlightStyle {
+            color: PrintColor::Gray,
+            intensity: PrintIntensity::Standard,
+        },
+        "continuation_selected" => match state.highlight_mode {
+            HighlightMode::Dark => HighlightStyle {
+                color: PrintColor::Extended(33),
+                intensity: PrintIntensity::Standard,
+            },
+            HighlightMode::Light => HighlightStyle {
+                color: PrintColor::Extended(27),
+                intensity: PrintIntensity::Standard,
+            },
+            _ => HighlightStyle {
+                color: PrintColor::Green,
+                intensity: PrintIntensity::Standard,
+            },
+        },
+        "bracket" | "primary_key_column" => HighlightStyle {
+            color: PrintColor::Standard,
+            intensity: PrintIntensity::Underline,
+        },
+        "suggestion_directory_name" => HighlightStyle {
+            color: PrintColor::Standard,
+            intensity: PrintIntensity::Bold,
+        },
+        "prompt" => HighlightStyle {
+            color: PrintColor::Extended(208),
+            intensity: PrintIntensity::Bold,
+        },
+        "error_emphasis" | "error_suggestion" => HighlightStyle {
+            color: PrintColor::Red,
+            intensity: PrintIntensity::Bold,
+        },
+        "log_trace" => HighlightStyle {
+            color: PrintColor::Blue,
+            intensity: PrintIntensity::Bold,
+        },
+        "log_debug" => HighlightStyle {
+            color: PrintColor::Yellow,
+            intensity: PrintIntensity::Bold,
+        },
+        "log_info" => HighlightStyle {
+            color: PrintColor::Green,
+            intensity: PrintIntensity::Bold,
+        },
+        "log_warning" => HighlightStyle {
+            color: PrintColor::Extended(172),
+            intensity: PrintIntensity::Bold,
+        },
+        _ => HighlightStyle {
+            color: PrintColor::Standard,
+            intensity: PrintIntensity::Standard,
+        },
+    }
+}
+
 const HIGHLIGHT_ELEMENTS: &[&str] = &[
     "error",
     "keyword",
@@ -904,6 +1056,7 @@ fn set_highlight_color(
         "null_value" => state.highlight_style_null_value = style,
         _ => {}
     }
+    crate::highlight::sync_linenoise_highlight_style(&element_norm, style);
     Ok(())
 }
 
@@ -2121,6 +2274,7 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
             }
             if state.highlight_mode != HighlightMode::Automatic {
                 crate::highlight::apply_mode_styles(state, state.highlight_mode);
+                crate::highlight::sync_linenoise_highlight_mode(state.highlight_mode);
             }
             0
         }
@@ -2308,9 +2462,7 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                 return 0;
             }
             let path = if let Some(rest) = z_file.strip_prefix("~/") {
-                std::env::var("HOME")
-                    .ok()
-                    .filter(|s| !s.is_empty())
+                crate::paths::home_dir()
                     .map(|home| format!("{}/{}", home, rest))
                     .unwrap_or_else(|| z_file.to_string())
             } else {
@@ -2421,6 +2573,7 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                 return 1;
             }
             state.highlighting_enabled = string_to_bool(&args[1]);
+            crate::highlight::sync_linenoise_highlighting_enabled(state.highlighting_enabled);
             0
         }
         crate::dotcmd::DotCommandId::Comment
@@ -2522,6 +2675,11 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                 cmd.push_str(part);
             }
             state.ui_command = format!("CALL {}", cmd);
+            0
+        }
+        #[cfg(target_os = "windows")]
+        crate::dotcmd::DotCommandId::Utf8 => {
+            enable_windows_utf8_console(state);
             0
         }
         crate::dotcmd::DotCommandId::ProgressBar => {
@@ -2713,7 +2871,7 @@ fn run_dot_command(state: &mut ShellState, session: &mut Session, command: &str)
                     z_cmd.push('"');
                 }
             }
-            let status = Command::new("sh").arg("-c").arg(z_cmd).status();
+            let status = crate::output::shell_command(&z_cmd).status();
             if let Ok(status) = status {
                 if !status.success() {
                     let code = status.code().unwrap_or(1);
@@ -6318,25 +6476,20 @@ enum TableMetadataHighlightElement {
 fn table_metadata_terminal_code(
     state: &ShellState,
     element: TableMetadataHighlightElement,
-) -> &'static str {
-    use crate::state::HighlightMode;
-    match element {
-        TableMetadataHighlightElement::DatabaseName => match state.highlight_mode {
-            HighlightMode::Dark => "\x1b[38;5;166m",
-            _ => "\x1b[38;5;172m",
-        },
-        TableMetadataHighlightElement::SchemaName => match state.highlight_mode {
-            HighlightMode::Dark => "\x1b[38;5;25m",
-            _ => "\x1b[38;5;39m",
-        },
-        TableMetadataHighlightElement::TableName => "\x1b[1m",
-        TableMetadataHighlightElement::PrimaryKeyColumn => "\x1b[4m",
-        TableMetadataHighlightElement::ColumnType
-        | TableMetadataHighlightElement::Comment
-        | TableMetadataHighlightElement::Layout
-        | TableMetadataHighlightElement::TableLayout => "\x1b[90m",
-        TableMetadataHighlightElement::ColumnName | TableMetadataHighlightElement::ViewLayout => "",
-    }
+) -> String {
+    let element_name = match element {
+        TableMetadataHighlightElement::DatabaseName => "database_name",
+        TableMetadataHighlightElement::SchemaName => "schema_name",
+        TableMetadataHighlightElement::TableName => "table_name",
+        TableMetadataHighlightElement::ColumnName => "column_name",
+        TableMetadataHighlightElement::ColumnType => "column_type",
+        TableMetadataHighlightElement::PrimaryKeyColumn => "primary_key_column",
+        TableMetadataHighlightElement::Comment => "comment",
+        TableMetadataHighlightElement::Layout => "layout",
+        TableMetadataHighlightElement::TableLayout => "table_layout",
+        TableMetadataHighlightElement::ViewLayout => "view_layout",
+    };
+    terminal_code(highlight_style_for_element(state, element_name))
 }
 
 fn table_metadata_push(
@@ -6354,7 +6507,7 @@ fn table_metadata_push(
         out.push_str(text);
         return;
     }
-    out.push_str(code);
+    out.push_str(&code);
     out.push_str(text);
     out.push_str(reset_terminal_code());
 }
@@ -7209,12 +7362,9 @@ fn try_render_shell_describe(
 
     let highlight_results =
         state.highlighting_enabled && state.highlight_results != OptionType::Off;
-    let ansi_layout = terminal_code(HighlightStyle {
-        color: PrintColor::Gray,
-        intensity: PrintIntensity::Standard,
-    });
+    let ansi_layout = terminal_code(highlight_style_for_element(state, "layout"));
     let ansi_reset = reset_terminal_code().to_string();
-    let ansi_bold = "\x1b[1m";
+    let ansi_bold = terminal_code(highlight_style_for_element(state, "table_name"));
     let border_line = |left: char, fill: char, right: char| -> String {
         let mut s = String::new();
         s.push(left);
@@ -7598,8 +7748,7 @@ fn render_duckbox_result(
     // - Wrap behavior when `.maxwidth` is set and there is enough vertical budget
     // - Large number rendering: `all` formatting + `footer` (row + count footer)
     // - Control character escaping (`\n`, etc.) for values + column names
-    //
-    // Still missing: column pruning/splitting when too wide, full `.columns` pivot parity, nested highlighting annotations.
+    // - Column pruning/splitting, `.columns` pivoting, and nested value highlighting annotations
     const BOX_24: &str = "\u{2500}";
     const BOX_13: &str = "\u{2502}";
     const BOX_23: &str = "\u{250c}";
@@ -7782,8 +7931,12 @@ fn render_duckbox_result(
         decimal_sep: u8,
         thousand_sep: u8,
     ) -> DuckboxFooter {
-        let mut column_count_str = format!("{} column", col_count);
-        if col_count != 1 {
+        let mut column_count_str = if row_count == 0 {
+            String::new()
+        } else {
+            format!("{} column", col_count)
+        };
+        if !column_count_str.is_empty() && col_count != 1 {
             column_count_str.push('s');
         }
         let row_count_str = format!(
@@ -7870,8 +8023,7 @@ fn render_duckbox_result(
             && !has_hidden_columns
             && footer.readable_rows_str.is_empty()
             && footer.shown_str.is_empty()
-            && row_count >= 10
-            && col_count > 1
+            && (row_count == 0 || (row_count >= 10 && col_count > 1))
     }
 
     fn plain_footer_line(footer: &DuckboxFooter, total_render_length: usize) -> String {
@@ -7918,9 +8070,7 @@ fn render_duckbox_result(
                     pager_child: None,
                 };
             }
-            let child = Command::new("sh")
-                .arg("-c")
-                .arg(pager_cmd)
+            let child = crate::output::shell_command(pager_cmd)
                 .stdin(Stdio::piped())
                 .spawn()
                 .ok();
@@ -7983,8 +8133,8 @@ fn render_duckbox_result(
         }
     };
 
-    let render_columns_mode = state.columns;
-    if render_columns_mode {
+    let requested_columns_mode = state.columns;
+    if requested_columns_mode {
         // The shipped shell only constructs the "(... million)" footer-row when in ROWS mode.
         if large_number_rendering == LargeNumberRendering::Footer {
             large_number_rendering = LargeNumberRendering::None;
@@ -7993,13 +8143,12 @@ fn render_duckbox_result(
 
     let highlight_results = highlight_results_enabled(state);
     let ansi_reset = reset_terminal_code().to_string();
-    let ansi_layout = terminal_code(HighlightStyle {
-        color: PrintColor::Gray,
-        intensity: PrintIntensity::Standard,
-    });
-    let ansi_column_name = terminal_code(state.highlight_style_column_name);
-    let ansi_column_type = terminal_code(state.highlight_style_column_type);
-    let ansi_null_value = terminal_code(state.highlight_style_null_value);
+    let ansi_layout = terminal_code(highlight_style_for_element(state, "layout"));
+    let ansi_footer = terminal_code(highlight_style_for_element(state, "footer"));
+    let ansi_column_name = terminal_code(highlight_style_for_element(state, "column_name"));
+    let ansi_column_type = terminal_code(highlight_style_for_element(state, "column_type"));
+    let ansi_null_value = terminal_code(highlight_style_for_element(state, "null_value"));
+    let ansi_string_constant = terminal_code(highlight_style_for_element(state, "string_constant"));
 
     let mut col_names: Vec<String> = Vec::with_capacity(col_count);
     let mut col_type_names: Vec<String> = Vec::with_capacity(col_count);
@@ -8072,6 +8221,8 @@ fn render_duckbox_result(
     if max_rows_usize != usize::MAX && row_count <= max_rows_usize.saturating_add(3) {
         rows_to_render = row_count;
     }
+    let render_columns_mode = requested_columns_mode;
+    let render_columns_as_rows = requested_columns_mode && rows_to_render > 0;
     let (mut top_rows, mut bottom_rows) = if rows_to_render == row_count {
         (rows_to_render, 0usize)
     } else {
@@ -8155,6 +8306,95 @@ fn render_duckbox_result(
             out.write_all(ansi_reset.as_bytes());
         } else {
             out.write_all(s.as_bytes());
+        }
+    };
+    let nested_highlight_candidate = |src_c: usize, text: &str| -> bool {
+        src_c != SPLIT_COLUMN
+            && (col_logical_type_ids.get(src_c).is_some_and(|t| {
+                matches!(
+                    *t,
+                    duckdb_sys::DUCKDB_TYPE_LIST
+                        | duckdb_sys::DUCKDB_TYPE_STRUCT
+                        | duckdb_sys::DUCKDB_TYPE_ARRAY
+                        | duckdb_sys::DUCKDB_TYPE_MAP
+                )
+            }) || col_type_names
+                .get(src_c)
+                .is_some_and(|t| t == "json" || t == "variant")
+                || matches!(text.trim_start().chars().next(), Some('{') | Some('[')))
+    };
+    let write_nested_highlighted = |out: &mut DuckboxWriter, buf: &[u8], enable: bool| {
+        if !enable
+            || !highlight_results
+            || (ansi_string_constant.is_empty() && ansi_null_value.is_empty())
+        {
+            out.write_all(buf);
+            return;
+        }
+        let Ok(text) = std::str::from_utf8(buf) else {
+            out.write_all(buf);
+            return;
+        };
+        let mut last = 0usize;
+        let mut iter = text.char_indices().peekable();
+        while let Some((idx, ch)) = iter.next() {
+            if ch == '\'' || ch == '"' {
+                let quote = ch;
+                let mut escaped = false;
+                let mut end = None;
+                for (j, next) in iter.by_ref() {
+                    if escaped {
+                        escaped = false;
+                        continue;
+                    }
+                    if next == '\\' {
+                        escaped = true;
+                        continue;
+                    }
+                    if next == quote {
+                        end = Some(j + next.len_utf8());
+                        break;
+                    }
+                }
+                let Some(end) = end else {
+                    break;
+                };
+                if idx > last {
+                    out.write_all(&text.as_bytes()[last..idx]);
+                }
+                if ansi_string_constant.is_empty() {
+                    out.write_all(&text.as_bytes()[idx..end]);
+                } else {
+                    out.write_all(ansi_string_constant.as_bytes());
+                    out.write_all(&text.as_bytes()[idx..end]);
+                    out.write_all(ansi_reset.as_bytes());
+                }
+                last = end;
+                continue;
+            }
+
+            if idx + 4 <= text.len() && text.as_bytes()[idx..idx + 4].eq_ignore_ascii_case(b"null")
+            {
+                let previous = text[..idx].chars().next_back();
+                let next = text[idx + 4..].chars().next();
+                let is_boundary = |c: Option<char>| !matches!(c, Some(c) if c.is_ascii_alphanumeric() || c == '_');
+                if is_boundary(previous) && is_boundary(next) {
+                    if idx > last {
+                        out.write_all(&text.as_bytes()[last..idx]);
+                    }
+                    if ansi_null_value.is_empty() {
+                        out.write_all(&text.as_bytes()[idx..idx + 4]);
+                    } else {
+                        out.write_all(ansi_null_value.as_bytes());
+                        out.write_all(&text.as_bytes()[idx..idx + 4]);
+                        out.write_all(ansi_reset.as_bytes());
+                    }
+                    last = idx + 4;
+                }
+            }
+        }
+        if last < text.len() {
+            out.write_all(&text.as_bytes()[last..]);
         }
     };
 
@@ -8500,7 +8740,7 @@ fn render_duckbox_result(
 
     let mut writer = DuckboxWriter::new(&mut state.out, &pager_cmd, use_pager);
 
-    if render_columns_mode {
+    if render_columns_as_rows {
         let mut rows_to_render = row_count.min(max_rows_usize);
         if max_rows_usize != usize::MAX && row_count <= max_rows_usize.saturating_add(3) {
             rows_to_render = row_count;
@@ -8669,29 +8909,37 @@ fn render_duckbox_result(
                     // we already wrote the leading space for the row; write spaces between cells
                     layout_write(&mut writer, "");
                 }
-                let (buf, is_null, style) = if entry == SPLIT_COLUMN {
+                let (buf, is_null, style, highlight_nested) = if entry == SPLIT_COLUMN {
                     (
                         truncate_center_for_cell(DOTDOTDOT, out_widths[out_c]),
                         false,
                         Some(&ansi_layout),
+                        false,
                     )
                 } else if entry == 0 {
                     (
                         truncate_for_cell(col_names[c].as_str(), out_widths[out_c], false),
                         false,
                         Some(&ansi_column_name),
+                        false,
                     )
                 } else if entry == 1 {
                     (
                         truncate_center_for_cell(col_type_names[c].as_str(), out_widths[out_c]),
                         false,
                         Some(&ansi_column_type),
+                        false,
                     )
                 } else {
                     let k = entry - 2;
                     let cell = values[c][k].as_deref().unwrap_or(null_value.as_str());
                     let b = truncate_for_cell(cell, out_widths[out_c], true);
-                    (b, values[c][k].is_none(), None)
+                    (
+                        b,
+                        values[c][k].is_none(),
+                        None,
+                        nested_highlight_candidate(c, cell),
+                    )
                 };
                 if is_null {
                     write_styled(
@@ -8702,7 +8950,7 @@ fn render_duckbox_result(
                 } else if let Some(style) = style {
                     write_styled(&mut writer, style, std::str::from_utf8(&buf).unwrap_or(""));
                 } else {
-                    writer.write_all(&buf);
+                    write_nested_highlighted(&mut writer, &buf, highlight_nested);
                 }
                 layout_write(&mut writer, " ");
                 layout_write(&mut writer, BOX_13);
@@ -8732,7 +8980,7 @@ fn render_duckbox_result(
             footer_line
                 .push_str(&" ".repeat(padding.saturating_sub(footer.column_count_str.len())));
             footer_line.push_str(&footer.column_count_str);
-            write_styled(&mut writer, &ansi_layout, &footer_line);
+            write_styled(&mut writer, &ansi_footer, &footer_line);
             layout_write(&mut writer, " ");
             layout_write(&mut writer, BOX_13);
             writer.write_all(b"\n");
@@ -9278,7 +9526,11 @@ fn render_duckbox_result(
                                                 writer.write_all(&buf);
                                             }
                                         } else {
-                                            writer.write_all(&buf);
+                                            write_nested_highlighted(
+                                                &mut writer,
+                                                &buf,
+                                                nested_highlight_candidate(src_c, s),
+                                            );
                                         }
                                     }
                                     layout_write(&mut writer, " ");
@@ -9488,7 +9740,11 @@ fn render_duckbox_result(
                                         writer.write_all(&buf);
                                     }
                                 } else {
-                                    writer.write_all(&buf);
+                                    write_nested_highlighted(
+                                        &mut writer,
+                                        &buf,
+                                        nested_highlight_candidate(src_c, s),
+                                    );
                                 }
                             }
                             layout_write(&mut writer, " ");
@@ -9559,17 +9815,19 @@ fn render_duckbox_result(
 
             let plain_footer = use_plain_footer(&footer, has_hidden_columns, row_count, col_count);
             if plain_footer {
-                box_row_sep(
-                    &mut writer,
-                    &render_col_width,
-                    BOX_24,
-                    BOX_12,
-                    BOX_124,
-                    BOX_14,
-                    &layout_write,
-                );
+                if row_count != 0 {
+                    box_row_sep(
+                        &mut writer,
+                        &render_col_width,
+                        BOX_24,
+                        BOX_12,
+                        BOX_124,
+                        BOX_14,
+                        &layout_write,
+                    );
+                }
                 let footer_line = plain_footer_line(&footer, total_render_length);
-                write_styled(&mut writer, &ansi_layout, &footer_line);
+                write_styled(&mut writer, &ansi_footer, &footer_line);
                 writer.write_all(b"\n");
             } else {
                 // footer
@@ -9611,14 +9869,14 @@ fn render_duckbox_result(
                                 &" ".repeat(padding.saturating_sub(footer.column_count_str.len())),
                             );
                             footer_line.push_str(&footer.column_count_str);
-                            write_styled(&mut writer, &ansi_layout, &footer_line);
+                            write_styled(&mut writer, &ansi_footer, &footer_line);
                         } else if render_rows {
                             let lpad = padding / 2;
                             let rpad = padding - lpad;
                             footer_line.push_str(&" ".repeat(lpad));
                             footer_line.push_str(&footer.row_count_str);
                             footer_line.push_str(&" ".repeat(rpad));
-                            write_styled(&mut writer, &ansi_layout, &footer_line);
+                            write_styled(&mut writer, &ansi_footer, &footer_line);
                         }
                         layout_write(&mut writer, " ");
                         layout_write(&mut writer, BOX_13);
@@ -9865,16 +10123,27 @@ fn render_duckbox_result(
                 }
             }
         }
-        let join = if row_count > 0 { BOX_1234 } else { BOX_DMIDDLE };
-        box_row_sep(
-            &mut writer,
-            &render_col_width,
-            BOX_24,
-            BOX_123,
-            join,
-            BOX_134,
-            &layout_write,
-        );
+        if row_count == 0 {
+            box_row_sep(
+                &mut writer,
+                &render_col_width,
+                BOX_24,
+                BOX_12,
+                BOX_124,
+                BOX_14,
+                &layout_write,
+            );
+        } else {
+            box_row_sep(
+                &mut writer,
+                &render_col_width,
+                BOX_24,
+                BOX_123,
+                BOX_1234,
+                BOX_134,
+                &layout_write,
+            );
+        }
 
         // values
         let mut rendered_row_idx = 0usize;
@@ -9999,7 +10268,11 @@ fn render_duckbox_result(
                                 writer.write_all(&buf);
                             }
                         } else {
-                            writer.write_all(&buf);
+                            write_nested_highlighted(
+                                &mut writer,
+                                &buf,
+                                nested_highlight_candidate(src_c, s),
+                            );
                         }
                     }
                     layout_write(&mut writer, " ");
@@ -10101,17 +10374,19 @@ fn render_duckbox_result(
 
         let plain_footer = use_plain_footer(&footer, has_hidden_columns, row_count, col_count);
         if plain_footer {
-            box_row_sep(
-                &mut writer,
-                &render_col_width,
-                BOX_24,
-                BOX_12,
-                BOX_124,
-                BOX_14,
-                &layout_write,
-            );
+            if row_count != 0 {
+                box_row_sep(
+                    &mut writer,
+                    &render_col_width,
+                    BOX_24,
+                    BOX_12,
+                    BOX_124,
+                    BOX_14,
+                    &layout_write,
+                );
+            }
             let footer_line = plain_footer_line(&footer, total_render_length);
-            write_styled(&mut writer, &ansi_layout, &footer_line);
+            write_styled(&mut writer, &ansi_footer, &footer_line);
             writer.write_all(b"\n");
         } else {
             // footer
@@ -10152,14 +10427,14 @@ fn render_duckbox_result(
                             &" ".repeat(padding.saturating_sub(footer.column_count_str.len())),
                         );
                         footer_line.push_str(&footer.column_count_str);
-                        write_styled(&mut writer, &ansi_layout, &footer_line);
+                        write_styled(&mut writer, &ansi_footer, &footer_line);
                     } else if render_rows {
                         let lpad = padding / 2;
                         let rpad = padding - lpad;
                         footer_line.push_str(&" ".repeat(lpad));
                         footer_line.push_str(&footer.row_count_str);
                         footer_line.push_str(&" ".repeat(rpad));
-                        write_styled(&mut writer, &ansi_layout, &footer_line);
+                        write_styled(&mut writer, &ansi_footer, &footer_line);
                     }
                     layout_write(&mut writer, " ");
                     layout_write(&mut writer, BOX_13);

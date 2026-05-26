@@ -47,3 +47,31 @@ def test_duckbox_complex_value_string_quoting(shell):
 └──────────────────────────────────────────┘
 """.strip()
     assert result.stdout == expected
+
+
+def test_duckbox_zero_rows_footer(shell):
+    result = (
+        ShellTest(shell)
+        .statement(".mode duckbox")
+        .statement("select 42 as a where false")
+        .statement(".columns")
+        .statement("select 42 as a where false")
+        .statement("select 42 as a, 99 as b where false")
+        .run()
+    )
+    expected = """
+┌────────┐
+│   a    │
+│ int32  │
+└────────┘
+  0 rows
+┌────────┐
+│   a    │
+└────────┘
+  0 rows
+┌────┬───┐
+│ a  │ b │
+└────┴───┘
+  0 rows
+""".strip()
+    assert result.stdout == expected

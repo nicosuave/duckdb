@@ -9,6 +9,7 @@ mod highlight;
 mod history;
 mod options;
 mod output;
+mod paths;
 mod prompt;
 mod repl;
 mod session;
@@ -25,7 +26,7 @@ use crate::state::{
     BailOnError, InitialAction, InputMode, MetadataResult, ShellState, StartupText,
 };
 use std::ffi::{CStr, CString};
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 
 struct CommandLineCall {
     option_index: usize,
@@ -45,15 +46,8 @@ fn print_stderr(msg: &str) {
     let _ = stderr.write_all(msg.as_bytes());
 }
 
-fn isatty(fd: i32) -> bool {
-    extern "C" {
-        fn isatty(fd: i32) -> i32;
-    }
-    unsafe { isatty(fd) == 1 }
-}
-
 fn get_home_directory() -> Option<String> {
-    std::env::var("HOME").ok().filter(|s| !s.is_empty())
+    crate::paths::home_dir()
 }
 
 fn get_default_duckdbrc() -> Option<String> {
@@ -245,9 +239,9 @@ fn main() {
     }
 
     let mut state = ShellState::new(program_name.clone());
-    state.stdin_is_interactive = isatty(0);
-    state.stdout_is_console = isatty(1);
-    state.stderr_is_console = isatty(2);
+    state.stdin_is_interactive = std::io::stdin().is_terminal();
+    state.stdout_is_console = std::io::stdout().is_terminal();
+    state.stderr_is_console = std::io::stderr().is_terminal();
 
     signals::install(state.stdin_is_interactive);
 
