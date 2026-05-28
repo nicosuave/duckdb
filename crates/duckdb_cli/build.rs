@@ -17,14 +17,10 @@ fn existing_file(path: &Path) -> bool {
 
 fn main() {
     println!("cargo:rerun-if-env-changed=DUCKDB_LIB_DIR");
-    println!("cargo:rerun-if-env-changed=DUCKDB_LIB_SOURCE");
-    println!("cargo:rerun-if-env-changed=DUCKDB_VENDOR_VERSION");
     println!("cargo:rerun-if-env-changed=CARGO_CFG_TARGET_OS");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
     let lib_name = candidate_lib_name(&target_os);
-    let vendor_version = env::var("DUCKDB_VENDOR_VERSION").unwrap_or_else(|_| "1.5.3".to_string());
-    let lib_source = env::var("DUCKDB_LIB_SOURCE").unwrap_or_else(|_| "vendor".to_string());
 
     let workspace_root =
         PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"))
@@ -37,32 +33,8 @@ fn main() {
 
     let repo_release = PathBuf::from(format!("{}/build/release/src", workspace_root.display()));
     let repo_debug = PathBuf::from(format!("{}/build/debug/src", workspace_root.display()));
-    let vendor_dir = PathBuf::from(format!(
-        "{}/vendor/duckdb/{}/lib/{}",
-        workspace_root.display(),
-        vendor_version,
-        match target_os.as_str() {
-            "macos" => "darwin",
-            "linux" => "linux",
-            _ => unreachable!(),
-        }
-    ));
-
-    match lib_source.as_str() {
-        "vendor" => {
-            lib_dirs.push(vendor_dir);
-            lib_dirs.push(repo_release);
-            lib_dirs.push(repo_debug);
-        }
-        "repo" | "" => {
-            lib_dirs.push(repo_release);
-            lib_dirs.push(repo_debug);
-            lib_dirs.push(vendor_dir);
-        }
-        other => {
-            panic!("Unknown DUCKDB_LIB_SOURCE='{other}' (expected 'repo' or 'vendor')");
-        }
-    }
+    lib_dirs.push(repo_release);
+    lib_dirs.push(repo_debug);
 
     for dir in &lib_dirs {
         println!("cargo:rerun-if-changed={}", dir.join(lib_name).display());

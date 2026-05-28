@@ -306,7 +306,8 @@ impl<'a> FormatState<'a> {
                     // For arrays of objects that appear mid-line, do not inline the entire array onto a single line.
                     // This matches the shipped duckbox JSON formatter behavior.
                     let next_is_object = self.component_idx + 1 < self.components.len()
-                        && self.components[self.component_idx + 1].typ == ComponentType::BracketOpen
+                        && self.components[self.component_idx + 1].typ
+                            == ComponentType::BracketOpen
                         && self.components[self.component_idx + 1].text == "{";
                     if component.text == "["
                         && next_is_object
@@ -328,9 +329,14 @@ impl<'a> FormatState<'a> {
                             if self.format_result != FormattingResult::Success {
                                 return;
                             }
-                            if inline_child_mode == InlineMode::InlinedMultiLine && inline_idx + 1 <= peek_idx {
+                            if inline_child_mode == InlineMode::InlinedMultiLine
+                                && inline_idx + 1 <= peek_idx
+                            {
                                 let next = &self.components[inline_idx + 1];
-                                if matches!(next.typ, ComponentType::Comma | ComponentType::BracketClose) {
+                                if matches!(
+                                    next.typ,
+                                    ComponentType::Comma | ComponentType::BracketClose
+                                ) {
                                     let cur = &self.components[inline_idx];
                                     let mut combined = String::with_capacity(
                                         cur.text.len().saturating_add(next.text.len()),
@@ -351,13 +357,16 @@ impl<'a> FormatState<'a> {
 
                     if self.mode == FormattingMode::CompactVertical {
                         if self.component_idx + 1 < self.components.len()
-                            && self.components[self.component_idx + 1].typ == ComponentType::BracketOpen
+                            && self.components[self.component_idx + 1].typ
+                                == ComponentType::BracketOpen
                         {
                             return;
                         }
                     }
 
-                    if self.mode == FormattingMode::Standard && component.text == "[" && next_is_object
+                    if self.mode == FormattingMode::Standard
+                        && component.text == "["
+                        && next_is_object
                         && before_line_length > 0
                     {
                         return;

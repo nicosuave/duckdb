@@ -624,10 +624,8 @@ mod tests {
 
     #[test]
     fn progress_bar_accepts_progress_settings_and_controls() {
-        validate_progress_bar_spec(
-            "{setting:progress_bar_percentage} {align:right}{setting:eta}",
-        )
-        .unwrap();
+        validate_progress_bar_spec("{setting:progress_bar_percentage} {align:right}{setting:eta}")
+            .unwrap();
     }
 
     #[test]

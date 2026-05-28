@@ -15,7 +15,7 @@ Build a tarball containing `duckdb` + a shipped `libduckdb` + headers:
 
 Override defaults:
 
-- `DUCKDB_VENDOR_VERSION=1.4.3 OUT_DIR=$PWD/rust_cli/dist bash rust_cli/package.sh`
+- `DUCKDB_PACKAGE_VERSION=1.5.3 OUT_DIR=$PWD/rust_cli/dist bash rust_cli/package.sh`
 - `DUCKDB_LIB_DIR=/path/to/libdir bash rust_cli/package.sh`
 
 ## Diff helper

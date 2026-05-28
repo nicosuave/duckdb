@@ -298,7 +298,9 @@ extern "C" {
     ) -> duckdb_state;
     pub fn duckdb_destroy_prepare(prepared_statement: *mut duckdb_prepared_statement);
     pub fn duckdb_prepare_error(prepared_statement: duckdb_prepared_statement) -> *const c_char;
-    pub fn duckdb_prepared_statement_type(statement: duckdb_prepared_statement) -> duckdb_statement_type;
+    pub fn duckdb_prepared_statement_type(
+        statement: duckdb_prepared_statement,
+    ) -> duckdb_statement_type;
 
     pub fn duckdb_execute_prepared_streaming(
         prepared_statement: duckdb_prepared_statement,

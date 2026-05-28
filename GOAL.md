@@ -44,9 +44,9 @@ Full parity answer for the approved scope: yes. Windows behavior and macOS notar
 | S10 | DuckBox `.columns` zero-row pivot | Official does not pivot zero-row results into `Column`/`Type` rows | Fixed as part of S9 | Keep regression coverage | `.columns; select ... where false` exact output |
 | S11 | Nested DuckBox highlighting | Official annotates nested keys and NULL spans using `string_constant` and `null_value` styles | Rust now highlights quoted nested keys and case-preserving `NULL`/`null` spans | Expand if future official spans include more value classes | `test_nested_duckbox_value_highlight` plus official comparison |
 | S12 | Full result/style highlighting matrix | Official has many style elements: layout, footer, metadata, logs, prompt, error emphasis, suggestions, etc. | Done for the Rust-rendered surfaces: layout/footer/table metadata now use the highlight style table, custom `layout`/`footer` snapshots match official, and unsupported/unrendered suggestion/log surfaces are not exposed by this Rust CLI path | Keep regression coverage for every rendered style element that is used locally | `test_custom_layout_and_footer_highlight`; focused highlighting suite against Rust and official |
-| S13 | Interactive SQL highlighting exact style parity | Official linenoise uses parser tokenization and full `ShellHighlight` style table | Done: `.highlight`, `.highlight_mode`, and `.highlight_colors` sync into the vendored linenoise shim, with official default style table parity for the editor path | Keep deterministic PTY snapshots | PTY tests for `.highlight_colors keyword red` and `.highlight off` against Rust and official |
+| S13 | Interactive SQL highlighting exact style parity | Official linenoise uses parser tokenization and full `ShellHighlight` style table | Done: `.highlight`, `.highlight_mode`, and `.highlight_colors` sync into the repo linenoise shim, with official default style table parity for the editor path | Keep deterministic PTY snapshots | PTY tests for `.highlight_colors keyword red` and `.highlight off` against Rust and official |
 | S14 | Real UI extension launch | Official `-ui` runs `CALL start_ui()` via the UI extension | Done: existing failing-command wiring remains covered, and a gated real UI extension server launch smoke passes with `DUCKDB_UI_SMOKE=1` | Keep the real extension smoke gated because it downloads/loads the UI extension | `DUCKDB_UI_SMOKE=1 test_ui_command_start_ui_server_smoke` against Rust and official |
-| S15 | macOS package rpaths | Official distribution should not depend on a developer checkout | `package.sh` now removes repo-local rpaths from the packaged binary when possible | Verify no absolute repo-local rpaths in packaged Mach-O | `otool -l duckdb` rejects `/Users/nico/Code/duckdb-rust-cli` and vendor/build rpaths |
+| S15 | macOS package rpaths | Official distribution should not depend on a developer checkout | `package.sh` now removes repo-local rpaths from the packaged binary when possible | Verify no absolute repo-local rpaths in packaged Mach-O | `otool -l duckdb` rejects `/Users/nico/Code/duckdb-rust-cli` and build rpaths |
 | S16 | Package checksums | Release artifacts should have checksums | `package.sh` now writes `.sha256` when `shasum` or `sha256sum` exists | Verify checksum file is emitted and validates | `shasum -a 256 -c <archive>.sha256` or `sha256sum -c` |
 | S17 | macOS signing/notarization | Requires Developer ID signing and Apple notarization for hardened distribution | Script has env-gated signing hooks; no credentials are available in this environment | Approved out of scope by user on 2026-05-26 | No goal-blocking verification required |
 | S18 | Linux package rpaths | Official-style package should run from extracted directory without repo-local dependencies | Done: `package.sh` normalizes Linux package `RUNPATH` to `$ORIGIN:$ORIGIN/../lib` with `patchelf` | Keep Docker package smokes in release verification | Docker linux/amd64 and linux/arm64 package smokes, `patchelf --print-rpath`, and `readelf -d` |
@@ -79,7 +79,7 @@ Run from `/Users/nico/Code/duckdb-rust-cli`.
 | Focused DuckBox/highlighting tests | `uv run pytest tools/shell/tests/test_duckbox_complex_value_rendering.py tools/shell/tests/test_highlighting.py --shell-binary /Users/nico/.cargo/shared-target/debug/duckdb_cli` |
 | Full shell suite | `bash rust_cli/run_shell_tests.sh -rs` |
 | Parity scripts | `DUCKDB_REF_SHELL=/opt/homebrew/bin/duckdb DUCKDB_RUST_SHELL=/Users/nico/.cargo/shared-target/debug/duckdb_cli bash rust_cli/diff_shells.sh <script>` for all parity SQL scripts |
-| macOS package | `DUCKDB_VENDOR_VERSION=1.5.3 bash rust_cli/package.sh` |
+| macOS package | `DUCKDB_PACKAGE_VERSION=1.5.3 bash rust_cli/package.sh` |
 | macOS package rpath audit | `otool -l <extracted>/duckdb` and reject repo-local rpaths |
 | macOS package smoke | `<extracted>/duckdb -version` and `<extracted>/duckdb -c "select 42"` |
 | Linux arm64 package | Existing Docker linux/arm64 package smoke |
@@ -103,7 +103,7 @@ Run from `/Users/nico/Code/duckdb-rust-cli`.
 | 2026-05-26 | `bash -n rust_cli/package.sh` | Pass |
 | 2026-05-26 | macOS arm64 package build | Pass, produced `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz` and `.sha256` |
 | 2026-05-26 | macOS arm64 package smoke | Pass, `duckdb -version` reports `v1.5.3 (Variegata) 14eca11bd9`; `select 42` returns `42`; checksum validates |
-| 2026-05-26 | macOS package rpath audit | Pass, packaged binary has `@executable_path` only for `LC_RPATH`; no repo-local vendor/build rpath remains |
+| 2026-05-26 | macOS package rpath audit | Pass, packaged binary has `@executable_path` only for `LC_RPATH`; no repo-local build rpath remains |
 | 2026-05-26 | Windows and notarization scope | Approved out of scope by user |
 | 2026-05-26 | Focused editor/style/UI/macOS/Linux visibility slice | Pass, `21 passed` |
 | 2026-05-26 | Focused PTY editor highlighting tests against official `/opt/homebrew/bin/duckdb` | Pass, `2 passed` |
@@ -132,7 +132,7 @@ Run from `/Users/nico/Code/duckdb-rust-cli`.
 | 2026-05-26 | Updated stale empty-result test expectation to official 1.5.3 zero-row DuckBox output | Focused pytest, `7 passed`; full suite `511 passed, 2 skipped` |
 | 2026-05-26 | Added package checksum output, macOS package rpath cleanup, and env-gated signing hooks | `bash -n rust_cli/package.sh`; macOS package build/smoke/checksum/rpath audit passed |
 | 2026-05-26 | Closed Windows runtime/build and macOS notarization as required gates | User explicitly approved skipping Windows and notarization |
-| 2026-05-26 | Bridged `.highlight`, `.highlight_mode`, and `.highlight_colors` into vendored linenoise editor highlighting | Focused PTY tests pass against Rust and official |
+| 2026-05-26 | Bridged `.highlight`, `.highlight_mode`, and `.highlight_colors` into repo linenoise editor highlighting | Focused PTY tests pass against Rust and official |
 | 2026-05-26 | Routed layout/footer/table metadata rendering through the shared highlight style table | `test_custom_layout_and_footer_highlight` passes against Rust and official |
 | 2026-05-26 | Added gated real UI extension smoke using `-ui` plus `.ui_command start_ui_server()` | `DUCKDB_UI_SMOKE=1` focused test passes against Rust and official |
 | 2026-05-26 | Added macOS/Linux `.utf8` hidden-command regression | Focused test passes against Rust and official |

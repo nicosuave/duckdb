@@ -7,8 +7,8 @@ Non-goals (initially): Windows support.
 Acceptance: run `tools/shell/tests/` against the Rust CLI with matching stdout/stderr/exit codes.
 
 Status (as of 2026-01-21, current workspace state):
-- Interactive mode uses vendored linenoise (Ctrl-R reverse search + tab completion callback).
-- `bash rust_cli/run_shell_tests.sh` => **487 passed, 2 skipped** (builds with `DUCKDB_LIB_SOURCE=repo` + runs with `DUCKDB_SKIP_LIB_VERSION_CHECK=1`).
+- Interactive mode uses DuckDB's linenoise sources (Ctrl-R reverse search + tab completion callback).
+- `bash rust_cli/run_shell_tests.sh` => **487 passed, 2 skipped** (runs with `DUCKDB_SKIP_LIB_VERSION_CHECK=1`).
 - `EXPLAIN` statements render via the dedicated EXPLAIN renderer (not the `explain_key/explain_value` table).
 - `DESCRIBE` statements render via the table-metadata renderer (not the raw `column_name/column_type/...` table).
 - `.render_completion` / `.render_errors` are supported (wired to linenoise render toggles).

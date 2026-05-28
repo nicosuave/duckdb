@@ -1,3 +1,0 @@
-context_id,timestamp,type,log_level,message
-49,2026-01-13 00:26:09.308094+00,QueryLog,INFO,SELECT current_setting('enable_external_access')
-49,2026-01-13 05:02:59.561424+00,QueryLog,INFO,SELECT current_setting('enable_external_access')

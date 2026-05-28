@@ -94,7 +94,6 @@ fn main() {
     println!("cargo:rerun-if-env-changed=DUCKDB_LINENOISE_DIR");
     println!("cargo:rerun-if-env-changed=DUCKDB_INCLUDE_DIR");
     println!("cargo:rerun-if-env-changed=DUCKDB_SQLITE3_API_WRAPPER_DIR");
-    println!("cargo:rerun-if-env-changed=DUCKDB_VENDOR_VERSION");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
     let obj_dir = out_dir.join("obj");
@@ -103,26 +102,21 @@ fn main() {
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR not set"));
     let workspace_root = manifest_dir.join("../..");
-    let vendor_version = env::var("DUCKDB_VENDOR_VERSION").unwrap_or_else(|_| "1.5.3".to_string());
     let linenoise_dir = env::var_os("DUCKDB_LINENOISE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            workspace_root.join(format!("vendor/duckdb/{vendor_version}/linenoise"))
-        });
+        .unwrap_or_else(|| workspace_root.join("tools/shell/linenoise"));
 
     let duckdb_include = env::var_os("DUCKDB_INCLUDE_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| workspace_root.join(format!("vendor/duckdb/{vendor_version}/include")));
+        .unwrap_or_else(|| workspace_root.join("src/include"));
     let utf8proc_include = workspace_root.join("third_party/utf8proc/include");
     let sqlite3_api_wrapper_include = env::var_os("DUCKDB_SQLITE3_API_WRAPPER_DIR")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            workspace_root.join(format!(
-                "vendor/duckdb/{vendor_version}/sqlite3_api_wrapper"
-            ))
-        });
+        .unwrap_or_else(|| workspace_root.join("tools/shell/include"));
+    let shim_include = manifest_dir.join("include");
     let include_dir = linenoise_dir.join("include");
     let include_dirs = vec![
+        shim_include.clone(),
         include_dir.clone(),
         duckdb_include.clone(),
         utf8proc_include.clone(),
@@ -131,6 +125,15 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
     let is_msvc = target_os == "windows" && target_env == "msvc";
+
+    println!(
+        "cargo:rerun-if-changed={}",
+        shim_include.join("shell_highlight.hpp").display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        shim_include.join("shell_state.hpp").display()
+    );
 
     let sources = [
         "linenoise.cpp",

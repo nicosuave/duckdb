@@ -3,7 +3,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-version="${DUCKDB_VENDOR_VERSION:-1.5.3}"
+version="${DUCKDB_PACKAGE_VERSION:-$(git describe --tags --exact-match 2>/dev/null || git rev-parse --short HEAD)}"
 out_dir="${OUT_DIR:-$PWD/rust_cli/dist}"
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$PWD/target}"
 
@@ -11,9 +11,9 @@ os="$(uname -s | tr '[:upper:]' '[:lower:]')"
 arch="$(uname -m)"
 
 case "${os}" in
-  darwin) platform="macos" ; vendor_platform="darwin" ;;
-  linux) platform="linux" ; vendor_platform="linux" ;;
-  mingw*|msys*|cygwin*) platform="windows" ; vendor_platform="windows" ;;
+  darwin) platform="macos" ;;
+  linux) platform="linux" ;;
+  mingw*|msys*|cygwin*) platform="windows" ;;
   *)
     echo "unsupported host OS: ${os}" >&2
     exit 2
@@ -34,20 +34,24 @@ if [[ -n "${DUCKDB_LIB_DIR:-}" ]]; then
   link_lib_dir="${DUCKDB_LIB_DIR%/}"
   lib_path="${link_lib_dir}/${lib_file}"
 else
-  vendor_lib_dir="$PWD/vendor/duckdb/${version}/lib/${vendor_platform}"
-  link_lib_dir="${vendor_lib_dir}"
-  lib_path="${link_lib_dir}/${lib_file}"
+  for candidate_lib_dir in "$PWD/build/release/src" "$PWD/build/debug/src"; do
+    if [[ -f "${candidate_lib_dir}/${lib_file}" ]]; then
+      link_lib_dir="${candidate_lib_dir}"
+      lib_path="${candidate_lib_dir}/${lib_file}"
+      break
+    fi
+  done
 fi
 
 include_dir=""
 if [[ -n "${DUCKDB_INCLUDE_DIR:-}" ]]; then
   include_dir="${DUCKDB_INCLUDE_DIR%/}"
 else
-  include_dir="$PWD/vendor/duckdb/${version}/include"
+  include_dir="$PWD/src/include"
 fi
 
 if [[ ! -f "${lib_path}" ]]; then
-  echo "missing libduckdb: ${lib_path}" >&2
+  echo "missing libduckdb: ${lib_path:-not found in build/release/src or build/debug/src}" >&2
   echo "set DUCKDB_LIB_DIR to the directory containing ${lib_file}" >&2
   exit 2
 fi
@@ -64,7 +68,7 @@ trap 'rm -rf "${stage_dir}"' EXIT
 rm -rf "${out_dir}/${pkg_name}"
 mkdir -p "${out_dir}/${pkg_name}"
 
-cargo build -p duckdb_cli --release
+DUCKDB_LIB_DIR="${link_lib_dir}" cargo build -p duckdb_cli --release
 
 if [[ "${platform}" == "windows" ]]; then
   cp -f "${CARGO_TARGET_DIR}/release/duckdb_cli${exe_ext}" "${out_dir}/${pkg_name}/duckdb${exe_ext}"
@@ -84,7 +88,7 @@ if [[ "${platform}" == "macos" ]] && command -v install_name_tool >/dev/null 2>&
   if command -v otool >/dev/null 2>&1; then
     while IFS= read -r rpath; do
       case "${rpath}" in
-        "${PWD}"*|*"/vendor/duckdb/"*|*"/build/release/src"|*"/build/debug/src")
+        "${PWD}"*|*"/build/release/src"|*"/build/debug/src")
           install_name_tool -delete_rpath "${rpath}" "${pkg_binary}" >/dev/null 2>&1 || true
           ;;
       esac

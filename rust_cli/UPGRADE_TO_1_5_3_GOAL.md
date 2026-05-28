@@ -22,7 +22,7 @@ Implement the larger DuckDB Rust CLI 1.5.x changeset, not just document it:
 
 | Area | Result | Verification |
 |---|---|---|
-| Runtime and packaging target | Default vendor/runtime/package target is DuckDB `1.5.3`. | `./target/debug/duckdb_cli -version`, macOS and Linux package smoke tests |
+| Runtime and packaging target | Default repo/runtime/package target is DuckDB `1.5.3`. | `./target/debug/duckdb_cli -version`, macOS and Linux package smoke tests |
 | Linux portability | Fixed `duckdb_open_ext` error pointer typing for Linux arm64 bindings. | Linux arm64 Docker package build |
 | Prompt rendering | Added dynamic prompt parser/rendering for `{setting}`, `{sql}`, `{color}`, `{highlight_element}`, `{max_length}`, and default `memory D` prompt behavior. | `tools/shell/tests/test_prompt.py`, full shell suite |
 | Prompt validation | `.prompt` validates only the main prompt and leaves continuation prompts literal, matching official behavior. | `tools/shell/tests/test_prompt.py` |
@@ -32,8 +32,8 @@ Implement the larger DuckDB Rust CLI 1.5.x changeset, not just document it:
 | Pager behavior | Aligned `.pager` status text, rejected unsupported `set_column_threshold`, and disabled pager for non-interactive stdin. | `tools/shell/tests/test_pager.py` |
 | Colors and highlighting | Matched `.display_colors` tie ordering and retained highlight-mode behavior. | `tools/shell/tests/test_display_colors.py`, highlighting tests |
 | Warnings/logging | Added duplicate warning suppression and log-level ANSI styling. | `tools/shell/tests/test_warning.py`, `test_logging.py` |
-| Interactive readline | Updated vendored 1.5.3 linenoise ABI and Rust FFI for completion type/score/extra char plus seeded reverse search. | `tools/shell/tests/test_autocomplete.py`, `test_interactive_startup.py`, PTY tests |
-| Vendored linenoise | Replaced the 1.5.3 linenoise vendor tree and added minimal shell shims needed for Rust integration. | macOS build, Linux build, full shell suite |
+| Interactive readline | Updated 1.5.3 linenoise ABI and Rust FFI for completion type/score/extra char plus seeded reverse search. | `tools/shell/tests/test_autocomplete.py`, `test_interactive_startup.py`, PTY tests |
+| Repo linenoise integration | Uses the DuckDB repo linenoise tree with minimal shell shims needed for Rust integration. | macOS build, Linux build, full shell suite |
 | Tests | Added focused regression coverage for every parity gap fixed in this pass. | Full shell suite and targeted shell slice |
 
 ## Upgrade Inventory
@@ -63,10 +63,10 @@ Recorded on 2026-05-24 from branch `rust-cli`.
 
 | Check | Result |
 |---|---|
-| `CARGO_TARGET_DIR=/Users/nico/Code/duckdb-rust-cli/target DUCKDB_VENDOR_VERSION=1.5.3 DUCKDB_LIB_SOURCE=repo cargo test -p duckdb_cli` | Pass, 0 Rust unit tests |
+| `CARGO_TARGET_DIR=/Users/nico/Code/duckdb-rust-cli/target cargo test -p duckdb_cli` | Pass, 0 Rust unit tests |
 | `bash rust_cli/run_shell_tests.sh tools/shell/tests/test_prompt.py tools/shell/tests/test_help_visibility.py tools/shell/tests/test_help_no_ansi.py tools/shell/tests/test_command_line_arguments.py tools/shell/tests/test_display_colors.py tools/shell/tests/test_highlight_colors_extended.py tools/shell/tests/test_deprecated_highlight_color_aliases.py tools/shell/tests/test_highlight_mode_invalid.py tools/shell/tests/test_highlighting.py tools/shell/tests/test_logging.py tools/shell/tests/test_warning.py tools/shell/tests/test_pager.py tools/shell/tests/test_autocomplete.py tools/shell/tests/test_interactive_startup.py tools/shell/tests/test_interactive_ctrl_a_ctrl_e.py tools/shell/tests/test_interactive_ctrl_c.py tools/shell/tests/test_interactive_ctrl_d.py tools/shell/tests/test_interactive_ctrl_u_ctrl_k.py tools/shell/tests/test_interactive_ctrl_w.py tools/shell/tests/test_interactive_history_navigation.py tools/shell/tests/test_interactive_statement_splitting.py tools/shell/tests/test_sql_is_complete.py tools/shell/tests/test_statement_splitting_edgecases.py tools/shell/tests/test_read_from_stdin.py` | Pass, `132 passed` |
 | `bash rust_cli/run_shell_tests.sh` | Pass, `495 passed, 2 skipped` |
-| `DUCKDB_VENDOR_VERSION=1.5.3 bash rust_cli/package.sh` | Pass, produced `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz` |
+| `DUCKDB_PACKAGE_VERSION=1.5.3 bash rust_cli/package.sh` | Pass, produced `rust_cli/dist/duckdb-rust-cli-1.5.3-macos-arm64.tar.gz` |
 | Linux arm64 Docker package build with `rust:1.90-bookworm` and DuckDB `1.5.3` Linux arm64 library | Pass, produced `/tmp/duckdb-rust-cli-linux-package-out/duckdb-rust-cli-1.5.3-linux-aarch64.tar.gz` |
 | Linux arm64 package smoke: `duckdb -version` | Pass, printed `v1.5.3` |
 | Linux arm64 package smoke: `duckdb -c "select 42 as answer;"` | Pass, returned `42` |
@@ -93,5 +93,5 @@ Recorded on 2026-05-24 from branch `rust-cli`.
 
 - The current build still emits existing Rust warnings for unused helpers and two `total_render_length` assignments in `exec.rs`.
 - Windows packaging remains out of scope until explicitly requested.
-- The Rust REPL keeps the vendored linenoise editor interception disabled to avoid C++ exceptions unwinding over Rust FFI.
+- The Rust REPL keeps linenoise editor interception disabled to avoid C++ exceptions unwinding over Rust FFI.
 - Future CLI parity work should continue using the official `v1.5.3` shell tests and `rust_cli/diff_shells.sh` scripts as the oracle.

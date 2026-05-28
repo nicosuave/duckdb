@@ -249,10 +249,10 @@ fn create_value_from_vector_non_null(
                 let ptr = data as *const duckdb_sys::duckdb_uhugeint;
                 duckdb_sys::duckdb_create_uuid(*ptr.add(row as usize))
             }
-	            duckdb_sys::DUCKDB_TYPE_DECIMAL => {
-	                let width = duckdb_sys::duckdb_decimal_width(type_);
-	                let scale = duckdb_sys::duckdb_decimal_scale(type_);
-	                let internal = duckdb_sys::duckdb_decimal_internal_type(type_);
+            duckdb_sys::DUCKDB_TYPE_DECIMAL => {
+                let width = duckdb_sys::duckdb_decimal_width(type_);
+                let scale = duckdb_sys::duckdb_decimal_scale(type_);
+                let internal = duckdb_sys::duckdb_decimal_internal_type(type_);
                 let value = match internal {
                     duckdb_sys::DUCKDB_TYPE_TINYINT => {
                         let v = *(data as *const i8).add(row as usize) as i128;
@@ -303,46 +303,46 @@ fn create_value_from_vector_non_null(
                     }
                     _ => duckdb_sys::duckdb_hugeint { lower: 0, upper: 0 },
                 };
-	                let dec = duckdb_sys::duckdb_decimal {
-	                    width,
-	                    scale,
-	                    value,
-	                };
-	                duckdb_sys::duckdb_create_decimal(dec)
-		            }
-		            duckdb_sys::DUCKDB_TYPE_BIGNUM => {
-		                // BIGNUM vectors store the internal "bignum blob" representation inside a duckdb_string_t:
-		                //   header (3 bytes) + big-endian magnitude bytes (bitwise-NOT for negative values).
-		                // We decode that to (abs_bytes, is_negative) and create a duckdb_bignum value.
-		                let ptr = data as *const duckdb_sys::duckdb_string_t;
-		                let s_ptr = ptr.add(row as usize);
-		                let len = duckdb_sys::duckdb_string_t_length(*s_ptr) as usize;
-		                let data_ptr = duckdb_sys::duckdb_string_t_data(s_ptr) as *const u8;
-		                if data_ptr.is_null() || len < 4 {
-		                    duckdb_sys::duckdb_create_null_value()
-		                } else {
-		                    let blob = std::slice::from_raw_parts(data_ptr, len);
-		                    let is_negative = (blob[0] & 0x80) == 0;
-		                    let mut abs_bytes: Vec<u8> = Vec::with_capacity(len - 3);
-		                    if is_negative {
-		                        for &b in blob.iter().skip(3) {
-		                            abs_bytes.push(!b);
-		                        }
-		                    } else {
-		                        abs_bytes.extend_from_slice(&blob[3..]);
-		                    }
-		                    let input = duckdb_sys::duckdb_bignum {
-		                        data: abs_bytes.as_mut_ptr(),
-		                        size: abs_bytes.len() as duckdb_sys::idx_t,
-		                        is_negative,
-		                    };
-		                    duckdb_sys::duckdb_create_bignum(input)
-		                }
-		            }
-		            duckdb_sys::DUCKDB_TYPE_VARCHAR => {
-		                let ptr = data as *const duckdb_sys::duckdb_string_t;
-		                let s_ptr = ptr.add(row as usize);
-		                let len = duckdb_sys::duckdb_string_t_length(*s_ptr) as u64;
+                let dec = duckdb_sys::duckdb_decimal {
+                    width,
+                    scale,
+                    value,
+                };
+                duckdb_sys::duckdb_create_decimal(dec)
+            }
+            duckdb_sys::DUCKDB_TYPE_BIGNUM => {
+                // BIGNUM vectors store the internal "bignum blob" representation inside a duckdb_string_t:
+                //   header (3 bytes) + big-endian magnitude bytes (bitwise-NOT for negative values).
+                // We decode that to (abs_bytes, is_negative) and create a duckdb_bignum value.
+                let ptr = data as *const duckdb_sys::duckdb_string_t;
+                let s_ptr = ptr.add(row as usize);
+                let len = duckdb_sys::duckdb_string_t_length(*s_ptr) as usize;
+                let data_ptr = duckdb_sys::duckdb_string_t_data(s_ptr) as *const u8;
+                if data_ptr.is_null() || len < 4 {
+                    duckdb_sys::duckdb_create_null_value()
+                } else {
+                    let blob = std::slice::from_raw_parts(data_ptr, len);
+                    let is_negative = (blob[0] & 0x80) == 0;
+                    let mut abs_bytes: Vec<u8> = Vec::with_capacity(len - 3);
+                    if is_negative {
+                        for &b in blob.iter().skip(3) {
+                            abs_bytes.push(!b);
+                        }
+                    } else {
+                        abs_bytes.extend_from_slice(&blob[3..]);
+                    }
+                    let input = duckdb_sys::duckdb_bignum {
+                        data: abs_bytes.as_mut_ptr(),
+                        size: abs_bytes.len() as duckdb_sys::idx_t,
+                        is_negative,
+                    };
+                    duckdb_sys::duckdb_create_bignum(input)
+                }
+            }
+            duckdb_sys::DUCKDB_TYPE_VARCHAR => {
+                let ptr = data as *const duckdb_sys::duckdb_string_t;
+                let s_ptr = ptr.add(row as usize);
+                let len = duckdb_sys::duckdb_string_t_length(*s_ptr) as u64;
                 let data_ptr = duckdb_sys::duckdb_string_t_data(s_ptr) as *const c_char;
                 duckdb_sys::duckdb_create_varchar_length(data_ptr, len)
             }
