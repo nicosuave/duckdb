@@ -93,6 +93,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=AR");
     println!("cargo:rerun-if-env-changed=DUCKDB_LINENOISE_DIR");
     println!("cargo:rerun-if-env-changed=DUCKDB_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=DUCKDB_FMT_INCLUDE_DIR");
     println!("cargo:rerun-if-env-changed=DUCKDB_SQLITE3_API_WRAPPER_DIR");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
@@ -109,6 +110,9 @@ fn main() {
     let duckdb_include = env::var_os("DUCKDB_INCLUDE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_root.join("src/include"));
+    let fmt_include = env::var_os("DUCKDB_FMT_INCLUDE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root.join("third_party/fmt/include"));
     let utf8proc_include = workspace_root.join("third_party/utf8proc/include");
     let sqlite3_api_wrapper_include = env::var_os("DUCKDB_SQLITE3_API_WRAPPER_DIR")
         .map(PathBuf::from)
@@ -119,6 +123,7 @@ fn main() {
         shim_include.clone(),
         include_dir.clone(),
         duckdb_include.clone(),
+        fmt_include.clone(),
         utf8proc_include.clone(),
         sqlite3_api_wrapper_include.clone(),
     ];

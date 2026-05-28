@@ -9,6 +9,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=CXX");
     println!("cargo:rerun-if-env-changed=AR");
     println!("cargo:rerun-if-env-changed=DUCKDB_INCLUDE_DIR");
+    println!("cargo:rerun-if-env-changed=DUCKDB_FMT_INCLUDE_DIR");
     println!("cargo:rerun-if-env-changed=MACOSX_DEPLOYMENT_TARGET");
 
     let out_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR not set"));
@@ -19,6 +20,9 @@ fn main() {
     let duckdb_include = env::var_os("DUCKDB_INCLUDE_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| workspace_root.join("src/include"));
+    let fmt_include = env::var_os("DUCKDB_FMT_INCLUDE_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| workspace_root.join("third_party/fmt/include"));
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").expect("CARGO_CFG_TARGET_OS not set");
     let target_env = env::var("CARGO_CFG_TARGET_ENV").unwrap_or_default();
@@ -44,12 +48,14 @@ fn main() {
             cxx.arg("/std:c++17")
                 .arg("/EHsc")
                 .arg(format!("/I{}", duckdb_include.display()))
+                .arg(format!("/I{}", fmt_include.display()))
                 .arg("/c")
                 .arg(src)
                 .arg(format!("/Fo{}", obj.display()));
         } else {
             cxx.arg("-std=c++17")
-                .arg(format!("-I{}", duckdb_include.display()));
+                .arg(format!("-I{}", duckdb_include.display()))
+                .arg(format!("-I{}", fmt_include.display()));
             if target_os == "macos" {
                 if let Some(target) = deployment_target.as_deref() {
                     cxx.arg(format!("-mmacosx-version-min={}", target));

@@ -9,7 +9,7 @@
 extern "C" {
 
 const char *duckdb_shellshim_target_version() {
-	return "1.5.3";
+	return "1.6.0";
 }
 
 const char *duckdb_shellshim_library_version() {
