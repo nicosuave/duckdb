@@ -966,10 +966,6 @@ pub fn process_reader<R: BufRead>(
 
 pub fn run_interactive_banner(state: &ShellState, con: duckdb_sys::duckdb_connection) {
     if state.startup_text == StartupText::None {
-        if state.opened_transient_in_memory && state.stdin_is_interactive {
-            print_stdout("Connected to a transient in-memory database.\n");
-            print_stdout("Use \".open FILENAME\" to reopen on a persistent database.\n");
-        }
         return;
     }
 
@@ -988,23 +984,19 @@ pub fn run_interactive_banner(state: &ShellState, con: duckdb_sys::duckdb_connec
         (version, String::new(), String::new())
     };
 
-    let source_prefix: String = source_id.chars().take(19).collect();
-    if codename.is_empty() || source_prefix.is_empty() {
+    if codename.is_empty() || source_id.is_empty() {
         print_stdout(&format!("DuckDB {}\n", version.trim()));
     } else {
-        print_stdout(&format!(
-            "DuckDB {} ({}) {}\n",
-            version.trim(),
-            codename,
-            source_prefix
-        ));
+        print_stdout(&format!("DuckDB {} ({})\n", version.trim(), codename));
     }
     if state.startup_text == StartupText::All {
+        if state.highlighting_enabled && state.stdout_is_console {
+            print_stdout("\x1b[90m");
+        }
         print_stdout("Enter \".help\" for usage hints.\n");
-    }
-    if state.opened_transient_in_memory && state.stdin_is_interactive {
-        print_stdout("Connected to a transient in-memory database.\n");
-        print_stdout("Use \".open FILENAME\" to reopen on a persistent database.\n");
+        if state.highlighting_enabled && state.stdout_is_console {
+            print_stdout("\x1b[00m");
+        }
     }
 }
 

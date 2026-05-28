@@ -77,7 +77,7 @@ def _pty_run(shell, args, env, send_lines, send_after=None, timeout_s=10.0):
     return buf.decode("utf-8", errors="ignore")
 
 
-def test_interactive_startup_banner_transient_db(shell, tmp_path):
+def test_interactive_startup_banner(shell, tmp_path):
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
@@ -92,9 +92,49 @@ def test_interactive_startup_banner_transient_db(shell, tmp_path):
         timeout_s=10.0,
     )
 
+    assert "DuckDB v" in out
     assert 'Enter ".help" for usage hints.' in out
-    assert "Connected to a transient in-memory database." in out
-    assert 'Use ".open FILENAME" to reopen on a persistent database.' in out
+    assert "\x1b[90mEnter" in out
+    assert "Connected to a transient in-memory database." not in out
+    assert 'Use ".open FILENAME" to reopen on a persistent database.' not in out
+
+
+def test_interactive_help_output_highlighting(shell, tmp_path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "dumb"
+
+    out = _pty_run(
+        shell=shell,
+        args=["-interactive", "--init", "/dev/null"],
+        env=env,
+        send_lines=[".help", ".quit"],
+        send_after=["D ", "D "],
+        timeout_s=10.0,
+    )
+
+    assert "\x1b[32m.bail\x1b[00m\x1b[33m on|off\x1b[00m" in out
+    assert "\x1b[32m.help\x1b[00m\x1b[33m ?-all? ?PATTERN?\x1b[00m" in out
+
+
+def test_interactive_help_output_highlighting_respects_highlight_off(shell, tmp_path):
+    env = os.environ.copy()
+    env["HOME"] = str(tmp_path)
+    env["DUCKDB_HISTORY"] = str(tmp_path / ".duckdb_history")
+    env["TERM"] = "dumb"
+
+    out = _pty_run(
+        shell=shell,
+        args=["-interactive", "--init", "/dev/null"],
+        env=env,
+        send_lines=[".highlight off", ".help", ".quit"],
+        send_after=["D ", "D ", "D "],
+        timeout_s=10.0,
+    )
+
+    assert "\x1b[32m.bail" not in out
+    assert ".bail on|off" in out
 
 
 def test_interactive_multiline_statement_prompts(shell, tmp_path):

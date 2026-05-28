@@ -2,7 +2,12 @@
 
 import os
 import pytest
+import re
 from conftest import ShellTest
+
+
+def _strip_ansi(text):
+    return re.sub(r"\x1b\[[0-9;]*m", "", text)
 
 
 def test_help_constant_not_listed(shell):
@@ -32,12 +37,13 @@ def test_help_shortcuts(shell):
 
 def test_help_metadata_text_matches_1_5(shell):
     result = ShellTest(shell).statement(".help").run()
-    assert ".bail on|off" in result.stdout
-    assert "Default OFF" in result.stdout
-    assert ".highlight_mode mixed|dark|light" in result.stdout
-    assert ".highlight_mode mixed|dark|light|auto" not in result.stdout
-    assert ".safe_mode" in result.stdout
-    assert "Enable safe-mode" in result.stdout
+    stdout = _strip_ansi(result.stdout)
+    assert ".bail on|off" in stdout
+    assert "Default OFF" in stdout
+    assert ".highlight_mode mixed|dark|light" in stdout
+    assert ".highlight_mode mixed|dark|light|auto" not in stdout
+    assert ".safe_mode" in stdout
+    assert "Enable safe-mode" in stdout
 
 
 def test_check_is_unknown_command(shell):

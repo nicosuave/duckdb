@@ -1582,8 +1582,26 @@ fn show_help(state: &mut ShellState, pattern: Option<&str>) -> usize {
         crate::sqlite_shell::strglob(glob_pattern, spec.command)
     }
 
+    fn help_colors_enabled(state: &ShellState) -> bool {
+        state.highlighting_enabled
+    }
+
     fn print_plain(state: &mut ShellState, text: &str) {
         print_stdout(state, text);
+    }
+
+    fn print_colored(state: &mut ShellState, color_code: &str, text: &str) {
+        if help_colors_enabled(state) {
+            print_stdout(state, color_code);
+            print_stdout(state, text);
+            print_stdout(state, "\x1b[00m");
+        } else {
+            print_plain(state, text);
+        }
+    }
+
+    fn first_part_is_option(first_part: &str) -> bool {
+        first_part.trim_start().starts_with('-')
     }
 
     let mut print_extended = false;
@@ -1681,9 +1699,13 @@ fn show_help(state: &mut ShellState, pattern: Option<&str>) -> usize {
         };
 
         if !info.command_name.is_empty() {
-            print_plain(state, &info.command_name);
+            print_colored(state, "\x1b[32m", &info.command_name);
         }
-        print_plain(state, &info.first_part);
+        if !info.command_name.is_empty() || first_part_is_option(&info.first_part) {
+            print_colored(state, "\x1b[33m", &info.first_part);
+        } else {
+            print_plain(state, &info.first_part);
+        }
         print_stdout(state, &spaces);
         print_stdout_line(state, &info.second_part);
     }
