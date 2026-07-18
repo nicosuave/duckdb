@@ -19,6 +19,7 @@
 
 #include <cinttypes>
 #include <cstdio>
+#include <cstring>
 
 namespace duckdb {
 
@@ -59,10 +60,10 @@ DebugVerificationMode DBConfigOptions::global_verification_mode = DebugVerificat
 		    nullptr, optional_idx()                                                                                    \
 	}
 
-#define DUCKDB_SETTING_ALIAS(_ALIAS, _SETTING_INDEX)                                                                   \
-	{ _ALIAS, _SETTING_INDEX }
+#define DUCKDB_SETTING_ALIAS(_ALIAS, _SETTING_NAME)                                                                    \
+	{ _ALIAS, _SETTING_NAME }
 #define FINAL_ALIAS                                                                                                    \
-	{ nullptr, 0 }
+	{ nullptr, nullptr }
 
 static const ConfigurationOption internal_options[] = {
 
@@ -247,15 +248,33 @@ static const ConfigurationOption internal_options[] = {
     DUCKDB_SETTING(ZstdMinStringLengthSetting),
     FINAL_SETTING};
 
-static const ConfigurationAlias setting_aliases[] = {DUCKDB_SETTING_ALIAS("configure_metrics", 30),
-                                                     DUCKDB_SETTING_ALIAS("custom_profiling_settings", 30),
-                                                     DUCKDB_SETTING_ALIAS("memory_limit", 128),
-                                                     DUCKDB_SETTING_ALIAS("null_order", 61),
-                                                     DUCKDB_SETTING_ALIAS("profile_output", 151),
-                                                     DUCKDB_SETTING_ALIAS("user", 170),
-                                                     DUCKDB_SETTING_ALIAS("wal_autocheckpoint", 29),
-                                                     DUCKDB_SETTING_ALIAS("worker_threads", 168),
+static const ConfigurationAlias setting_aliases[] = {DUCKDB_SETTING_ALIAS("configure_metrics", "configure_profiling"),
+                                                     DUCKDB_SETTING_ALIAS("custom_profiling_settings",
+                                                                          "configure_profiling"),
+                                                     DUCKDB_SETTING_ALIAS("memory_limit", "max_memory"),
+                                                     DUCKDB_SETTING_ALIAS("null_order", "default_null_order"),
+                                                     DUCKDB_SETTING_ALIAS("profile_output", "profiling_output"),
+                                                     DUCKDB_SETTING_ALIAS("user", "username"),
+                                                     DUCKDB_SETTING_ALIAS("wal_autocheckpoint", "checkpoint_threshold"),
+                                                     DUCKDB_SETTING_ALIAS("worker_threads", "threads"),
                                                      FINAL_ALIAS};
+
+static optional_ptr<const ConfigurationOption> GetInternalOptionByName(const char *name) {
+	idx_t lower = 0;
+	idx_t upper = DBConfig::GetOptionCount();
+	while (lower < upper) {
+		auto index = lower + (upper - lower) / 2;
+		auto comparison = strcmp(internal_options[index].name, name);
+		if (comparison < 0) {
+			lower = index + 1;
+		} else if (comparison > 0) {
+			upper = index;
+		} else {
+			return internal_options + index;
+		}
+	}
+	return nullptr;
+}
 
 vector<ConfigurationOption> DBConfig::GetOptions() {
 	vector<ConfigurationOption> options;
@@ -316,16 +335,14 @@ optional_ptr<const ConfigurationAlias> DBConfig::GetAliasByIndex(idx_t target_in
 
 optional_ptr<const ConfigurationOption> DBConfig::GetOptionByName(const String &name) {
 	auto lname = name.Lower();
-	for (idx_t index = 0; internal_options[index].name; index++) {
-		D_ASSERT(StringUtil::Lower(internal_options[index].name) == string(internal_options[index].name));
-		if (internal_options[index].name == lname) {
-			return internal_options + index;
-		}
+	auto option = GetInternalOptionByName(lname.c_str());
+	if (option) {
+		return option;
 	}
 	for (idx_t index = 0; setting_aliases[index].alias; index++) {
-		D_ASSERT(StringUtil::Lower(internal_options[index].name) == string(internal_options[index].name));
+		D_ASSERT(StringUtil::Lower(setting_aliases[index].alias) == string(setting_aliases[index].alias));
 		if (setting_aliases[index].alias == lname) {
-			return GetOptionByIndex(setting_aliases[index].option_index);
+			return GetInternalOptionByName(setting_aliases[index].option_name);
 		}
 	}
 	return nullptr;
