@@ -40,14 +40,15 @@ void TaskExecutor::ScheduleTask(unique_ptr<Task> task) {
 		// We failed to schedule the task, so we decrement the total number of tasks, instead of incrementing completed
 		// tasks count.
 		--total_tasks;
-		token->producer_cv.notify_one();
+		token->producer_cv.notify_all();
 		throw;
 	}
 }
 void TaskExecutor::FinishTask() {
 	const annotated_lock_guard<annotated_mutex> lk(token->producer_lock);
 	++completed_tasks;
-	token->producer_cv.notify_one();
+	// The final completion must wake every thread waiting in WorkOnTasks on this executor.
+	token->producer_cv.notify_all();
 }
 
 void TaskExecutor::DrainTasks() {
