@@ -1422,6 +1422,10 @@ void ParquetReader::PrepareRowGroupBuffer(ClientContext &context, ParquetReaderS
 			                                                *state.thrift_file_proto, allocator)) {
 				prune_result = FilterPropagateResult::FILTER_ALWAYS_FALSE;
 			}
+			if (prune_result == FilterPropagateResult::FILTER_FALSE_OR_NULL) {
+				// a pushed-down WHERE filter drops NULL rows too, so false-or-null prunes like always-false
+				prune_result = FilterPropagateResult::FILTER_ALWAYS_FALSE;
+			}
 
 			if (prune_result == FilterPropagateResult::FILTER_ALWAYS_FALSE) {
 				// this effectively will skip this chunk

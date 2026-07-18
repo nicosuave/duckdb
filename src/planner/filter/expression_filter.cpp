@@ -394,7 +394,18 @@ static FilterPropagateResult CheckComparisonStatistics(optional_ptr<ClientContex
 	auto result =
 	    CheckZonemapAgainstConstants(*filter_stats, comparison_type, array_ptr<const Value>(&comparison_constant, 1));
 	if (filter_stats->CanHaveNull()) {
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		// the zonemap only reasons about non-NULL values, so with possible NULL rows only the verdict
+		// that NULL rows agree with can be trusted
+		if (comparison_type == ExpressionType::COMPARE_DISTINCT_FROM) {
+			// a NULL row evaluates IS DISTINCT FROM <non-null constant> to TRUE, so ALWAYS_FALSE cannot be trusted
+			return result == FilterPropagateResult::FILTER_ALWAYS_TRUE ? result
+			                                                           : FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		}
+		// NULL rows fail the comparison: ALWAYS_TRUE would wrongly drop the filter, but ALWAYS_FALSE
+		// stays conclusive - no row, NULL or otherwise, can pass
+		if (result == FilterPropagateResult::FILTER_ALWAYS_TRUE) {
+			return FilterPropagateResult::NO_PRUNING_POSSIBLE;
+		}
 	}
 	return result;
 }
@@ -428,16 +439,14 @@ static FilterPropagateResult CheckBetweenStatistics(optional_ptr<ClientContext> 
 	                                              array_ptr<const Value>(&lower_val, 1));
 	auto upper_res = CheckZonemapAgainstConstants(*input_stats, BoundBetweenExpression::UpperComparisonType(between),
 	                                              array_ptr<const Value>(&upper_val, 1));
-	if (input_stats->CanHaveNull()) {
-		return FilterPropagateResult::NO_PRUNING_POSSIBLE;
-	}
 	if (lower_res == FilterPropagateResult::FILTER_ALWAYS_FALSE ||
 	    upper_res == FilterPropagateResult::FILTER_ALWAYS_FALSE) {
 		return FilterPropagateResult::FILTER_ALWAYS_FALSE;
 	}
 	if (lower_res == FilterPropagateResult::FILTER_ALWAYS_TRUE &&
 	    upper_res == FilterPropagateResult::FILTER_ALWAYS_TRUE) {
-		return FilterPropagateResult::FILTER_ALWAYS_TRUE;
+		return input_stats->CanHaveNull() ? FilterPropagateResult::NO_PRUNING_POSSIBLE
+		                                  : FilterPropagateResult::FILTER_ALWAYS_TRUE;
 	}
 	return FilterPropagateResult::NO_PRUNING_POSSIBLE;
 }

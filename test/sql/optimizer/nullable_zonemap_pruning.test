@@ -1,0 +1,76 @@
+# name: test/sql/optimizer/nullable_zonemap_pruning.test
+# description: Zone-map pruning stays enabled for comparison and BETWEEN filters over nullable columns
+# group: [optimizer]
+
+# Regression test: CheckComparisonStatistics/CheckBetweenStatistics used to discard the zone-map
+# verdict for an entire row group whenever that row group's filter column could contain NULLs, even
+# when the verdict was FILTER_ALWAYS_FALSE - a conclusive verdict, since NULL rows never match a
+# comparison or BETWEEN filter either. CheckInOperatorStatistics already handled this correctly (it
+# only demotes a FILTER_ALWAYS_TRUE verdict when NULLs are possible); CheckComparisonStatistics and
+# CheckBetweenStatistics now follow the same pattern.
+
+statement ok
+ATTACH '{TEST_DIR}/nullable_zonemap_pruning.duckdb' AS db (ROW_GROUP_SIZE 2048);
+
+statement ok
+USE db;
+
+statement ok
+CREATE TABLE t (x INTEGER, payload INTEGER);
+
+# Row group 0: x is in [1, 1024] for half the rows and NULL for the other half - the row group's
+# zone-map min/max excludes the filter constants used below, but the row group also has NULLs, so
+# CanHaveNull() is true for its statistics.
+statement ok
+INSERT INTO t SELECT CASE WHEN range % 2 = 0 THEN NULL ELSE (range % 1024) + 1 END, 1 FROM range(2048);
+
+# Row group 1: x is in [5000, 7047], no NULLs - always overlaps the filter constants used below.
+statement ok
+INSERT INTO t SELECT range + 5000, 1 FROM range(2048);
+
+# Row group 0 does contain NULLs.
+query I
+SELECT count(*) FROM t WHERE x IS NULL;
+----
+1024
+
+# Equality: 5000 cannot appear in row group 0's [1, 1024] range, so its FILTER_ALWAYS_FALSE
+# zone-map verdict must prune it even though the row group also contains NULLs.
+query II
+EXPLAIN ANALYZE SELECT sum(payload) FROM t WHERE x = 5000;
+----
+analyzed_plan	<REGEX>:.*Row Groups Scanned: 1 / 2.*
+
+query I
+SELECT sum(payload) FROM t WHERE x = 5000;
+----
+1
+
+# BETWEEN: [4000, 6000] cannot overlap row group 0's [1, 1024] range either, so it must be pruned
+# the same way.
+query II
+EXPLAIN ANALYZE SELECT sum(payload) FROM t WHERE x BETWEEN 4000 AND 6000;
+----
+analyzed_plan	<REGEX>:.*Row Groups Scanned: 1 / 2.*
+
+query I
+SELECT sum(payload) FROM t WHERE x BETWEEN 4000 AND 6000;
+----
+1001
+
+# Pruning never drops rows incorrectly - NULL rows are excluded from the results whether or not
+# their row group was pruned.
+query I
+SELECT count(*) FROM t WHERE x = 5000 AND x IS NULL;
+----
+0
+
+query I
+SELECT count(*) FROM t WHERE x BETWEEN 4000 AND 6000 AND x IS NULL;
+----
+0
+
+query I
+SELECT count(*) FROM t;
+----
+4096
