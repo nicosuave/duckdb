@@ -18,6 +18,7 @@ namespace {
 using EFCTestFileGuard = CachingTestFileGuard;
 using EFCTrackingFileSystem = SimpleTrackingFileSystem;
 using EFCNoMetadataFileSystem = NoValidationMetadataFileSystem;
+using EFCRemoteTrackingFileSystem = RemoteTrackingFileSystem;
 
 OpenFileInfo MakeTestOpenFileInfo(const string &path) {
 	OpenFileInfo info(path);
@@ -31,6 +32,16 @@ OpenFileInfo MakeValidatingOpenFileInfo(const string &path) {
 	info.extended_info = make_shared_ptr<ExtendedOpenFileInfo>();
 	info.extended_info->options["validate_external_file_cache"] = Value::BOOLEAN(true);
 	return info;
+}
+
+OpenFileInfo MakeFullDownloadOpenFileInfo(const string &path) {
+	auto info = MakeTestOpenFileInfo(path);
+	info.extended_info->options["force_full_download"] = Value::BOOLEAN(true);
+	return info;
+}
+
+string MakeRemoteTestPath(const string &local_path) {
+	return "s3://" + local_path;
 }
 
 string MakeTestContent(idx_t size) {
@@ -74,6 +85,110 @@ void EvictObjectCache(ObjectCache &object_cache) {
 }
 
 } // namespace
+
+TEST_CASE("Sparse remote reads probe warm cache before bypassing", "[external_file_cache]") {
+	DuckDB db = MakeCacheLocalFilesDB();
+	auto &db_instance = *db.instance;
+	Connection con(db);
+	con.Query("SET external_file_cache_remote_block_size=4096");
+	con.Query("SET external_file_cache_sparse_read_bypass_size=1024");
+
+	const idx_t FILE_SIZE = 8192;
+	const auto content = MakeTestContent(FILE_SIZE);
+	EFCTestFileGuard test_file("test_sparse_remote_warm.bin", content);
+	const auto remote_path = MakeRemoteTestPath(test_file.GetPath());
+
+	auto tracking_fs = make_uniq<EFCRemoteTrackingFileSystem>();
+	auto tracking_fs_ptr = tracking_fs.get();
+	CachingFileSystem cfs(*tracking_fs, db_instance);
+	auto handle = cfs.OpenFile(MakeTestOpenFileInfo(remote_path), FileFlags::FILE_FLAGS_READ);
+	auto &cache = db_instance.GetExternalFileCache();
+
+	// The threshold is exclusive, so this read uses the block cache and fetches one full block.
+	REQUIRE(ReadFull(*handle, 1024) == content.substr(0, 1024));
+	REQUIRE(tracking_fs_ptr->GetReadCount() == 1);
+	REQUIRE(tracking_fs_ptr->GetReadBytes() == 4096);
+	REQUIRE(CountCachedBlocks(cache) == 1);
+	REQUIRE(TotalCachedBytes(cache) == 4096);
+
+	tracking_fs_ptr->ResetReadStats();
+	REQUIRE(ReadFull(*handle, 128, 128) == content.substr(128, 128));
+	REQUIRE(tracking_fs_ptr->GetReadCount() == 0);
+	REQUIRE(tracking_fs_ptr->GetReadBytes() == 0);
+	REQUIRE(CountCachedBlocks(cache) == 1);
+	REQUIRE(TotalCachedBytes(cache) == 4096);
+
+	// Partial coverage falls back to one exact read without populating the missing block.
+	tracking_fs_ptr->ResetReadStats();
+	REQUIRE(ReadFull(*handle, 256, 4000) == content.substr(4000, 256));
+	REQUIRE(tracking_fs_ptr->GetReadCount() == 1);
+	REQUIRE(tracking_fs_ptr->GetReadBytes() == 256);
+	REQUIRE(CountCachedBlocks(cache) == 1);
+	REQUIRE(TotalCachedBytes(cache) == 4096);
+}
+
+TEST_CASE("Sparse remote read misses bypass block rounding", "[external_file_cache]") {
+	DuckDB db = MakeCacheLocalFilesDB();
+	auto &db_instance = *db.instance;
+	Connection con(db);
+	con.Query("SET external_file_cache_remote_block_size=4096");
+	con.Query("SET external_file_cache_sparse_read_bypass_size=1024");
+
+	const idx_t FILE_SIZE = 12288;
+	const auto content = MakeTestContent(FILE_SIZE);
+	EFCTestFileGuard test_file("test_sparse_remote_miss.bin", content);
+	const auto remote_path = MakeRemoteTestPath(test_file.GetPath());
+
+	auto tracking_fs = make_uniq<EFCRemoteTrackingFileSystem>();
+	auto tracking_fs_ptr = tracking_fs.get();
+	CachingFileSystem cfs(*tracking_fs, db_instance);
+	auto handle = cfs.OpenFile(MakeTestOpenFileInfo(remote_path), FileFlags::FILE_FLAGS_READ);
+	auto &cache = db_instance.GetExternalFileCache();
+
+	REQUIRE(ReadFull(*handle, 128, 100) == content.substr(100, 128));
+	REQUIRE(tracking_fs_ptr->GetReadCount() == 1);
+	REQUIRE(tracking_fs_ptr->GetReadBytes() == 128);
+	REQUIRE(CountCachedBlocks(cache) == 0);
+	REQUIRE(TotalCachedBytes(cache) == 0);
+
+	con.Query("SET external_file_cache_sparse_read_bypass_size=0");
+	tracking_fs_ptr->ResetReadStats();
+	REQUIRE(ReadFull(*handle, 128, 4096) == content.substr(4096, 128));
+	REQUIRE(tracking_fs_ptr->GetReadCount() == 1);
+	REQUIRE(tracking_fs_ptr->GetReadBytes() == 4096);
+	REQUIRE(CountCachedBlocks(cache) == 1);
+	REQUIRE(TotalCachedBytes(cache) == 4096);
+}
+
+TEST_CASE("Full-download handles keep small remote reads on the block cache", "[external_file_cache]") {
+	DuckDB db = MakeCacheLocalFilesDB();
+	auto &db_instance = *db.instance;
+	Connection con(db);
+	con.Query("SET external_file_cache_remote_block_size=4096");
+	con.Query("SET external_file_cache_sparse_read_bypass_size=1024");
+
+	const idx_t FILE_SIZE = 16384;
+	const auto content = MakeTestContent(FILE_SIZE);
+	EFCTestFileGuard test_file("test_sparse_remote_full_download.bin", content);
+	const auto remote_path = MakeRemoteTestPath(test_file.GetPath());
+
+	auto tracking_fs = make_uniq<EFCRemoteTrackingFileSystem>();
+	auto tracking_fs_ptr = tracking_fs.get();
+	CachingFileSystem cfs(*tracking_fs, db_instance);
+	auto handle = cfs.OpenFile(MakeFullDownloadOpenFileInfo(remote_path), FileFlags::FILE_FLAGS_READ);
+	auto &cache = db_instance.GetExternalFileCache();
+	REQUIRE(CountCachedBlocks(cache) == 4);
+	REQUIRE(TotalCachedBytes(cache) == FILE_SIZE);
+
+	// A changed block size makes the sparse probe miss, while the dense path can reindex the full cached file.
+	con.Query("SET external_file_cache_remote_block_size=8192");
+	tracking_fs_ptr->ResetReadStats();
+	REQUIRE(ReadFull(*handle, 128, 100) == content.substr(100, 128));
+	REQUIRE(tracking_fs_ptr->GetReadCount() == 0);
+	REQUIRE(tracking_fs_ptr->GetReadBytes() == 0);
+	REQUIRE(CountCachedBlocks(cache) == 2);
+	REQUIRE(TotalCachedBytes(cache) == FILE_SIZE);
+}
 
 TEST_CASE("Lazy reindex splits large blocks on next read", "[external_file_cache]") {
 	DuckDB db = MakeCacheLocalFilesDB();

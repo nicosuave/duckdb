@@ -10,6 +10,7 @@
 #include "duckdb/common/operator/subtract.hpp"
 #include "duckdb/storage/buffer_manager.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
+#include "duckdb/storage/external_file_cache/file_buffer_handle_group.hpp"
 #include "duckdb/storage/object_cache.hpp"
 
 namespace duckdb {
@@ -197,6 +198,74 @@ vector<shared_ptr<CacheBlock>> ExternalFileCache::ReindexAndAcquireBlocks(Cached
 		blocks[idx] = entry;
 	}
 	return blocks;
+}
+
+bool ExternalFileCache::TryReadCachedBlocks(CachedFile &cached_file, idx_t current_block_size, idx_t nr_bytes,
+                                            idx_t location, FileBufferHandleGroup &result) {
+	D_ASSERT(current_block_size > 0);
+	D_ASSERT(nr_bytes > 0);
+
+	const idx_t first_block = location / current_block_size;
+	const idx_t last_block = (location + nr_bytes - 1) / current_block_size;
+	const idx_t num_blocks = last_block - first_block + 1;
+
+	vector<shared_ptr<CacheBlock>> blocks;
+	{
+		const annotated_lock_guard<annotated_mutex> map_guard(cached_file.map_lock);
+		if (!cached_file.cached_block_size.IsValid() ||
+		    cached_file.cached_block_size.GetIndex() != current_block_size) {
+			return false;
+		}
+
+		blocks.reserve(num_blocks);
+		for (idx_t idx = 0; idx < num_blocks; idx++) {
+			auto entry = cached_file.blocks.find(first_block + idx);
+			if (entry == cached_file.blocks.end() || !entry->second) {
+				return false;
+			}
+			blocks.push_back(entry->second);
+		}
+	}
+
+	vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
+	mem_handles.reserve(num_blocks);
+	idx_t remaining = nr_bytes;
+	for (idx_t idx = 0; idx < num_blocks; idx++) {
+		BufferHandle pin;
+		idx_t block_valid_bytes;
+		{
+			auto &block = *blocks[idx];
+			const annotated_lock_guard<annotated_mutex> block_guard(block.mtx);
+			if (block.state != CacheBlockState::LOADED || !block.block_handle) {
+				return false;
+			}
+			pin = buffer_manager.Pin(block.block_handle);
+			if (!pin.IsValid()) {
+				return false;
+			}
+#ifdef DEBUG
+			D_ASSERT(Checksum(pin.Ptr(), block.nr_bytes) == block.checksum);
+#endif
+			block_valid_bytes = block.nr_bytes;
+		}
+
+		const idx_t block_start = (first_block + idx) * current_block_size;
+		const idx_t offset_in_block = (idx == 0) ? (location - block_start) : 0;
+		const idx_t available_in_block =
+		    (block_valid_bytes > offset_in_block) ? (block_valid_bytes - offset_in_block) : 0;
+		const idx_t length = MinValue(current_block_size - offset_in_block, remaining);
+		if (available_in_block < length) {
+			return false;
+		}
+		mem_handles.push_back({std::move(pin), offset_in_block, length});
+		remaining -= length;
+	}
+	if (remaining != 0) {
+		return false;
+	}
+
+	result = FileBufferHandleGroup(std::move(mem_handles));
+	return true;
 }
 
 ExternalFileCache::CachedFile::CachedFile(string path_p, idx_t generation_p)

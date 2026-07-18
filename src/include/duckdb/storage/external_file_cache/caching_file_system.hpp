@@ -119,6 +119,9 @@ private:
 	//! Current position (if non-seeking reads)
 	idx_t position;
 
+	//! Whether the whole file was downloaded into the cache; small reads must keep using those cached blocks.
+	bool full_download = false;
+
 	//! Throughput fitted from this handle's own reads, used for local files (remote files measure their own).
 	ReadThroughputEstimator throughput_estimator;
 };

@@ -775,6 +775,13 @@
         ]
     },
     {
+        "name": "external_file_cache_sparse_read_bypass_size",
+        "description": "Remote reads smaller than this many bytes bypass the external file cache's block rounding and read the exact byte range directly (serving already-cached blocks first if present), avoiding read amplification on sparse scans. Set to 0 to always use the block cache.",
+        "type": "UBIGINT",
+        "default_scope": "global",
+        "default_value": "1048576"
+    },
+    {
         "name": "external_threads",
         "description": "The number of external threads that work on DuckDB tasks.",
         "type": "UBIGINT",

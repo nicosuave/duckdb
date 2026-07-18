@@ -7,6 +7,7 @@
 #include "duckdb/common/enums/memory_tag.hpp"
 #include "duckdb/common/file_system.hpp"
 #include "duckdb/main/client_context.hpp"
+#include "duckdb/main/settings.hpp"
 #include "duckdb/parallel/task_executor.hpp"
 #include "duckdb/parallel/task_scheduler.hpp"
 #include "duckdb/storage/buffer/block_handle.hpp"
@@ -221,8 +222,8 @@ CachingFileHandle::CachingFileHandle(QueryContext context, CachingFileSystem &ca
 	if (needs_open) {
 		GetFileHandle();
 	}
-	auto needs_full_download = StripForceFullDownloadIfPresent();
-	if (needs_full_download) {
+	full_download = StripForceFullDownloadIfPresent();
+	if (full_download) {
 		Read(GetFileSize(), 0);
 	}
 }
@@ -280,6 +281,12 @@ FileBufferHandleGroup CachingFileHandle::Read(const idx_t nr_bytes, const idx_t 
 		no_validation_metadata = version_tag.empty() && (!last_modified.IsFinite() || last_modified == timestamp_t(0));
 	}
 
+	const idx_t sparse_bypass_size =
+	    !full_download && FileSystem::IsRemoteFile(path.path)
+	        ? Settings::Get<ExternalFileCacheSparseReadBypassSizeSetting>(caching_file_system.db)
+	        : 0;
+	const bool sparse_read = sparse_bypass_size != 0 && nr_bytes < sparse_bypass_size;
+
 	if (!external_file_cache.IsEnabled() || !external_file_cache.ShouldCacheFile(path.path) || no_validation_metadata) {
 		auto buf = AllocateUncachedReadBuffer(external_file_cache.GetBufferManager(), nr_bytes);
 		ReadAndRecord(context, buf.GetDataMutable(), nr_bytes, location);
@@ -293,6 +300,18 @@ FileBufferHandleGroup CachingFileHandle::Read(const idx_t nr_bytes, const idx_t 
 	const idx_t first_block = location / block_size;
 	const idx_t last_block = (location + nr_bytes - 1) / block_size;
 	const idx_t num_blocks = last_block - first_block + 1;
+	if (sparse_read) {
+		FileBufferHandleGroup result;
+		if (external_file_cache.TryReadCachedBlocks(*current_cached_file, block_size, nr_bytes, location, result)) {
+			return result;
+		}
+
+		auto buf = AllocateUncachedReadBuffer(external_file_cache.GetBufferManager(), nr_bytes);
+		ReadAndRecord(context, buf.GetDataMutable(), nr_bytes, location);
+		vector<FileBufferHandleGroup::MemoryHandle> mem_handles;
+		mem_handles.push_back({std::move(buf), 0, nr_bytes});
+		return FileBufferHandleGroup(std::move(mem_handles));
+	}
 
 	// Atomically reindex (if needed) and acquire the block range.
 	auto blocks =

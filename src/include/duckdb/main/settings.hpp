@@ -1170,6 +1170,19 @@ struct ExternalFileCacheRemoteBlockSizeSetting {
 	static void OnSet(SettingCallbackInfo &info, Value &input);
 };
 
+struct ExternalFileCacheSparseReadBypassSizeSetting {
+	using RETURN_TYPE = idx_t;
+	static constexpr const char *Name = "external_file_cache_sparse_read_bypass_size";
+	static constexpr const char *Description =
+	    "Remote reads smaller than this many bytes bypass the external file cache's block rounding and read the exact "
+	    "byte range directly (serving already-cached blocks first if present), avoiding read amplification on sparse "
+	    "scans. Set to 0 to always use the block cache.";
+	static constexpr const char *InputType = "UBIGINT";
+	static constexpr const char *DefaultValue = "1048576";
+	static constexpr SettingScopeTarget Scope = SettingScopeTarget::GLOBAL_DEFAULT;
+	static constexpr idx_t SettingIndex = NEXT_SETTING_INDEX();
+};
+
 struct ExternalThreadsSetting {
 	using RETURN_TYPE = idx_t;
 	static constexpr const char *Name = "external_threads";

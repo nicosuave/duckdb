@@ -63,4 +63,43 @@ timestamp_t NoValidationMetadataFileSystem::GetLastModifiedTime(FileHandle &hand
 	return timestamp_t(0);
 }
 
+string RemoteTrackingFileSystem::GetName() const {
+	return "RemoteTrackingFileSystem";
+}
+
+bool RemoteTrackingFileSystem::CanHandleFile(const string &path) {
+	return StringUtil::StartsWith(path, "s3://");
+}
+
+unique_ptr<FileHandle> RemoteTrackingFileSystem::OpenFile(const string &path, FileOpenFlags flags,
+                                                          optional_ptr<FileOpener> opener) {
+	D_ASSERT(CanHandleFile(path));
+	return LocalFileSystem::OpenFile(path.substr(5), flags, opener);
+}
+
+void RemoteTrackingFileSystem::Read(FileHandle &handle, void *buffer, int64_t nr_bytes, idx_t location) {
+	{
+		const annotated_lock_guard<annotated_mutex> guard(read_stats_mutex);
+		read_count++;
+		read_bytes += UnsafeNumericCast<idx_t>(nr_bytes);
+	}
+	LocalFileSystem::Read(handle, buffer, nr_bytes, location);
+}
+
+void RemoteTrackingFileSystem::ResetReadStats() {
+	const annotated_lock_guard<annotated_mutex> guard(read_stats_mutex);
+	read_count = 0;
+	read_bytes = 0;
+}
+
+idx_t RemoteTrackingFileSystem::GetReadCount() const {
+	const annotated_lock_guard<annotated_mutex> guard(read_stats_mutex);
+	return read_count;
+}
+
+idx_t RemoteTrackingFileSystem::GetReadBytes() const {
+	const annotated_lock_guard<annotated_mutex> guard(read_stats_mutex);
+	return read_bytes;
+}
+
 } // namespace duckdb

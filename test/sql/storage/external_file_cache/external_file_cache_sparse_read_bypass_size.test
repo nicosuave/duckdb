@@ -1,0 +1,29 @@
+# name: test/sql/storage/external_file_cache/external_file_cache_sparse_read_bypass_size.test
+# description: Test the external file cache sparse read bypass setting
+# group: [external_file_cache]
+
+query I
+select current_setting('external_file_cache_sparse_read_bypass_size') = 1048576;
+----
+true
+
+query T
+select typeof(current_setting('external_file_cache_sparse_read_bypass_size'));
+----
+UBIGINT
+
+statement ok
+set external_file_cache_sparse_read_bypass_size=524288;
+
+query I
+select current_setting('external_file_cache_sparse_read_bypass_size') = 524288;
+----
+true
+
+statement ok
+set external_file_cache_sparse_read_bypass_size=0;
+
+query I
+select current_setting('external_file_cache_sparse_read_bypass_size') = 0;
+----
+true

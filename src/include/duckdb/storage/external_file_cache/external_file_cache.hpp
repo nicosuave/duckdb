@@ -29,6 +29,7 @@ namespace duckdb {
 class ClientContext;
 class DatabaseInstance;
 class BufferManager;
+class FileBufferHandleGroup;
 
 class ExternalFileCache {
 public:
@@ -81,6 +82,9 @@ public:
 	//! Return the blocks cached for the given range.
 	vector<shared_ptr<CacheBlock>> ReindexAndAcquireBlocks(CachedFile &cached_file, idx_t current_block_size,
 	                                                       idx_t first_block, idx_t num_blocks);
+	//! Try to serve a byte range entirely from loaded blocks without changing cache state.
+	bool TryReadCachedBlocks(CachedFile &cached_file, idx_t current_block_size, idx_t nr_bytes, idx_t location,
+	                         FileBufferHandleGroup &result);
 
 	BufferManager &GetBufferManager() const;
 	//! Gets the shared cached file for the given path, creating it if not yet present.
